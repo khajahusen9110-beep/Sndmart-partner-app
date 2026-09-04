@@ -1,0 +1,7 @@
+{
+  "name": "Sndmart Partner",
+  "description": "Comprehensive delivery partner mobile app for Sndmart with live GPS tracking, instant assignment alerts, multi-order batches, OTP verification, and earnings ledger.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
