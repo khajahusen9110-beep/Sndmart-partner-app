@@ -465,6 +465,7 @@ fun ActiveDeliveryDetailScreen(
 
                             Button(
                                 onClick = {
+                                    focusManager.clearFocus()
                                     if (!dropPhotoCaptured) {
                                         viewModel.showMessage("Mandatory: Please photograph the delivered packet at doorstep")
                                         return@Button

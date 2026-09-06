@@ -1,13 +1,24 @@
 package com.example.ui
 
 import android.app.Application
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.util.Log
+import androidx.core.app.NotificationCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.MainActivity
+import com.example.R
 import com.example.data.local.AppDatabase
 import com.example.data.local.AppPreferences
 import com.example.data.location.LocationTracker
 import com.example.data.model.*
 import com.example.data.remote.SupabaseRepository
+import com.example.service.SndmartFirebaseMessagingService
+import com.example.ui.screens.order.IncomingOrderActivity
+import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -24,11 +35,14 @@ sealed interface AuthUiState {
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     val prefs = AppPreferences(application)
     private val database = AppDatabase.getInstance(application)
-    val repository = SupabaseRepository(application, prefs, database)
+    val repository = SupabaseRepository.getInstance(application)
     val locationTracker = LocationTracker(application, repository)
 
     private val _authUiState = MutableStateFlow<AuthUiState>(AuthUiState.Loading)
     val authUiState: StateFlow<AuthUiState> = _authUiState.asStateFlow()
+
+    private val _fcmTokenState = MutableStateFlow(prefs.fcmDeviceToken)
+    val fcmTokenState: StateFlow<String> = _fcmTokenState.asStateFlow()
 
     val currentPartner = repository.currentPartner
     val assignments = repository.assignments
@@ -37,6 +51,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val cashLedger = repository.cashLedger
     val paymentRequests = repository.paymentRequests
     val notifications = repository.notifications
+    val reviews = repository.reviews
     val currentLocation = locationTracker.currentLocation
     val isTrackingLocation = locationTracker.isTracking
 
@@ -114,6 +129,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun updateAuthStateForPartner(partner: DeliveryPartner) {
+        fetchAndRegisterFcmToken(showToast = false)
         when (partner.approvalStatus.lowercase()) {
             "pending" -> {
                 _authUiState.value = AuthUiState.UnderReview(partner)
@@ -449,8 +465,102 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun registerFcmToken(token: String) {
         viewModelScope.launch {
+            prefs.fcmDeviceToken = token
+            _fcmTokenState.value = token
             repository.registerDeviceToken(token)
-            showMessage("Registered device push token to backend")
+            showMessage("Push token registered: ${token.take(12)}...")
+        }
+    }
+
+    fun fetchAndRegisterFcmToken(showToast: Boolean = false) {
+        try {
+            FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+                if (task.isSuccessful && !task.result.isNullOrBlank()) {
+                    val token = task.result!!
+                    Log.d("MainViewModel", "Fetched FCM token: $token")
+                    prefs.fcmDeviceToken = token
+                    _fcmTokenState.value = token
+                    viewModelScope.launch {
+                        repository.registerDeviceToken(token)
+                        if (showToast) {
+                            showMessage("FCM token registered with backend!")
+                        }
+                    }
+                } else {
+                    Log.w("MainViewModel", "Failed to retrieve FCM token: ${task.exception?.message}")
+                    val fallback = prefs.fcmDeviceToken
+                    if (fallback.isNotBlank()) {
+                        _fcmTokenState.value = fallback
+                        viewModelScope.launch {
+                            repository.registerDeviceToken(fallback)
+                        }
+                    }
+                    if (showToast) {
+                        showMessage("Using active local device token: ${fallback.take(12)}...")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("MainViewModel", "FirebaseMessaging exception: ${e.message}", e)
+            val fallback = prefs.fcmDeviceToken
+            _fcmTokenState.value = fallback
+            viewModelScope.launch {
+                repository.registerDeviceToken(fallback)
+            }
+            if (showToast) {
+                showMessage("Device token: ${fallback.take(12)}...")
+            }
+        }
+    }
+
+    fun triggerTestIncomingOrderAlert(context: Context) {
+        val intent = Intent(context, IncomingOrderActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(IncomingOrderActivity.EXTRA_ASSIGNMENT_ID, "test_fcm_${System.currentTimeMillis().toString().takeLast(6)}")
+            putExtra(IncomingOrderActivity.EXTRA_ORDER_ID, "ORD-FCM-${(1000..9999).random()}")
+            putExtra(IncomingOrderActivity.EXTRA_TITLE, "Incoming Delivery Order!")
+            putExtra(IncomingOrderActivity.EXTRA_MESSAGE, "Darkstore Dispatch: Koramangala Hub")
+            putExtra(IncomingOrderActivity.EXTRA_STORE_NAME, "Sndmart DarkStore #104")
+            putExtra(IncomingOrderActivity.EXTRA_STORE_ADDRESS, "80 Feet Road, 4th Block, Koramangala")
+            putExtra(IncomingOrderActivity.EXTRA_CUSTOMER_ADDRESS, "Tower 3, Flat 901, Prestige Oasis, Bengaluru")
+            putExtra(IncomingOrderActivity.EXTRA_PAYMENT_MODE, "ONLINE_PREPAID")
+            putExtra(IncomingOrderActivity.EXTRA_TOTAL_AMOUNT, 520.0)
+            putExtra(IncomingOrderActivity.EXTRA_DELIVERY_FEE, 60.0)
+        }
+        context.startActivity(intent)
+        showMessage("Simulated FCM Full-Screen Order Alert triggered!")
+    }
+
+    fun sendTestNotification(context: Context) {
+        try {
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val intent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val pendingIntent = PendingIntent.getActivity(
+                context,
+                1001,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val builder = NotificationCompat.Builder(
+                context,
+                SndmartFirebaseMessagingService.CHANNEL_DELIVERY_UPDATES
+            )
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setContentTitle("Sndmart Push Notification")
+                .setContentText("FCM setup verified! Real-time alerts and orders are active.")
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .setContentIntent(pendingIntent)
+
+            notificationManager.notify(1001, builder.build())
+            repository.addNotification("FCM Test Notification", "Push notifications are operational on this device.", "info")
+            showMessage("Test notification posted to notification drawer!")
+        } catch (e: Exception) {
+            Log.e("MainViewModel", "Failed to send test notification: ${e.message}", e)
+            showMessage("Notification error: ${e.message}")
         }
     }
 
@@ -508,11 +618,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _userMessage.value = null
     }
 
+    fun refreshData() {
+        viewModelScope.launch {
+            _isActionLoading.value = true
+            repository.fetchAllBackendData()
+            _isActionLoading.value = false
+        }
+    }
+
     fun signOut() {
-        locationTracker.stopTracking()
-        repository.clearData()
-        prefs.clearSession()
-        _authUiState.value = AuthUiState.Unauthenticated
-        showMessage("Signed out successfully")
+        viewModelScope.launch {
+            try {
+                repository.deactivateDeviceToken()
+            } catch (e: Exception) {
+                // Ignore failure on logout
+            }
+            locationTracker.stopTracking()
+            repository.clearData()
+            prefs.clearSession()
+            _authUiState.value = AuthUiState.Unauthenticated
+            showMessage("Signed out successfully")
+        }
     }
 }

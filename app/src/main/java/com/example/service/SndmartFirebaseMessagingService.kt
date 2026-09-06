@@ -33,35 +33,13 @@ class SndmartFirebaseMessagingService : FirebaseMessagingService() {
         val prefs = AppPreferences(applicationContext)
         prefs.fcmDeviceToken = token
 
-        // Upsert device token to backend if user is authenticated
-        val userId = prefs.userId
-        val authToken = prefs.token
-        if (!userId.isNullOrEmpty() && !authToken.isNullOrEmpty()) {
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    val formattedUrl = if (prefs.customSupabaseUrl.endsWith("/")) prefs.customSupabaseUrl else "${prefs.customSupabaseUrl}/"
-                    val retrofit = Retrofit.Builder()
-                        .baseUrl(formattedUrl)
-                        .client(OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).build())
-                        .addConverterFactory(MoshiConverterFactory.create())
-                        .build()
-                    val api = retrofit.create(SupabaseApiService::class.java)
-
-                    api.registerDeviceToken(
-                        apiKey = prefs.customSupabaseKey,
-                        bearerToken = "Bearer $authToken",
-                        tokenData = mapOf(
-                            "user_id" to userId,
-                            "fcm_token" to token,
-                            "user_type" to "delivery_partner",
-                            "active" to true
-                        )
-                    )
-                    prefs.isFcmRegistered = true
-                    Log.d(TAG, "Device token successfully upserted to backend for user: $userId")
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to register FCM token with backend", e)
-                }
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val repo = com.example.data.remote.SupabaseRepository.getInstance(applicationContext)
+                repo.registerDeviceToken(token)
+                Log.d(TAG, "Device token registered with backend via SupabaseRepository")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to register FCM token with backend", e)
             }
         }
     }
@@ -76,9 +54,20 @@ class SndmartFirebaseMessagingService : FirebaseMessagingService() {
         val assignmentId = data["assignmentId"] ?: data["assignment_id"] ?: orderId
         val title = data["title"] ?: remoteMessage.notification?.title ?: "Sndmart Delivery"
         val message = data["message"] ?: remoteMessage.notification?.body ?: "New delivery assignment"
-        val isFullScreen = data["full_screen"] == "true" || type == "delivery_partner"
+        val isFullScreen = data["full_screen"] == "true" || type == "delivery_partner" || type == "new_assignment"
 
         createNotificationChannels()
+
+        // Update in-memory notifications and fetch newest assignments immediately
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val repo = com.example.data.remote.SupabaseRepository.getInstance(applicationContext)
+                repo.addNotification(title, message, type)
+                repo.fetchAssignments()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error updating repository state on FCM push: ${e.message}")
+            }
+        }
 
         if (isFullScreen && assignmentId.isNotEmpty()) {
             showIncomingOrderFullScreenNotification(assignmentId, title, message, data)

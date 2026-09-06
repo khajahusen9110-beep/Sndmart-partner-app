@@ -17,7 +17,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -244,27 +248,204 @@ fun ProfileScreen(
                         }
                     )
                 }
+            }
+        }
 
-                Spacer(modifier = Modifier.height(12.dp))
-                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-                Spacer(modifier = Modifier.height(12.dp))
+        // Firebase Cloud Messaging (FCM) Card
+        val fcmToken by viewModel.fcmTokenState.collectAsState()
+        val context = LocalContext.current
+        val clipboardManager = LocalClipboardManager.current
 
-                // FCM Push notification registration hook
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(text = "Push Notifications (FCM / Realtime)", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
-                        Text(text = "Device token active for order dispatch pings", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.NotificationsActive,
+                            contentDescription = null,
+                            tint = EmeraldPrimary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "FCM Push Notifications",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                        )
                     }
+                    Surface(
+                        color = EmeraldPrimary.copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(50)
+                    ) {
+                        Text(
+                            text = "ACTIVE",
+                            color = EmeraldPrimary,
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = "High-priority full-screen alerts and ringtones for incoming delivery orders and dispatch updates.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // FCM Device Token Display & Copy
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Device Registration Token:",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            IconButton(
+                                onClick = {
+                                    clipboardManager.setText(AnnotatedString(fcmToken))
+                                    viewModel.showMessage("FCM Token copied to clipboard!")
+                                },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.ContentCopy,
+                                    contentDescription = "Copy Token",
+                                    tint = EmeraldPrimary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                        Text(
+                            text = if (fcmToken.length > 36) "${fcmToken.take(18)}...${fcmToken.takeLast(14)}" else fcmToken,
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Action Buttons for Testing & Syncing
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     OutlinedButton(
                         onClick = {
-                            viewModel.registerFcmToken("fcm_token_android_${System.currentTimeMillis()}")
-                        }
+                            viewModel.fetchAndRegisterFcmToken(showToast = true)
+                        },
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(vertical = 8.dp)
                     ) {
-                        Text("Register", fontSize = 11.sp)
+                        Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Sync Token", fontSize = 12.sp)
+                    }
+
+                    Button(
+                        onClick = {
+                            viewModel.triggerTestIncomingOrderAlert(context)
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
+                        modifier = Modifier.weight(1.3f),
+                        contentPadding = PaddingValues(vertical = 8.dp)
+                    ) {
+                        Icon(Icons.Default.RingVolume, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Test Order Alert", fontSize = 12.sp)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                TextButton(
+                    onClick = {
+                        viewModel.sendTestNotification(context)
+                    },
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                ) {
+                    Icon(Icons.Default.Notifications, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Test Notification Drawer Ping", fontSize = 12.sp)
+                }
+            }
+        }
+
+        // Customer Reviews Card
+        val reviews by viewModel.reviews.collectAsState()
+        if (reviews.isNotEmpty()) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(modifier = Modifier.padding(18.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Customer Reviews",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Star, contentDescription = null, tint = AmberAccent, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "%.1f".format(partner.avgRating),
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    reviews.take(5).forEach { review ->
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row {
+                                        repeat(review.rating.toInt().coerceIn(1, 5)) {
+                                            Icon(Icons.Default.Star, contentDescription = null, tint = AmberAccent, modifier = Modifier.size(14.dp))
+                                        }
+                                    }
+                                    if (!review.createdAt.isNullOrBlank()) {
+                                        Text(text = review.createdAt.take(10), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                                    }
+                                }
+                                if (!review.comment.isNullOrBlank()) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(text = review.comment, style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        }
                     }
                 }
             }

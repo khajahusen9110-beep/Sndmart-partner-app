@@ -27,7 +27,10 @@ class AppPreferences(context: Context) {
     private val _supabaseUrl = MutableStateFlow(prefs.getString(KEY_SUPABASE_URL, DEFAULT_SUPABASE_URL) ?: DEFAULT_SUPABASE_URL)
     val supabaseUrl: StateFlow<String> = _supabaseUrl.asStateFlow()
 
-    private val _supabaseKey = MutableStateFlow(prefs.getString(KEY_SUPABASE_KEY, DEFAULT_ANON_KEY) ?: DEFAULT_ANON_KEY)
+    private val _supabaseKey = MutableStateFlow(
+        prefs.getString(KEY_SUPABASE_KEY, null)?.takeIf { !it.contains("placeholder_anon_key") }
+            ?: DEFAULT_ANON_KEY
+    )
     val supabaseKey: StateFlow<String> = _supabaseKey.asStateFlow()
 
     var customSupabaseUrl: String
@@ -38,7 +41,10 @@ class AppPreferences(context: Context) {
         }
 
     var customSupabaseKey: String
-        get() = prefs.getString(KEY_SUPABASE_KEY, DEFAULT_ANON_KEY) ?: DEFAULT_ANON_KEY
+        get() {
+            val key = prefs.getString(KEY_SUPABASE_KEY, DEFAULT_ANON_KEY) ?: DEFAULT_ANON_KEY
+            return if (key.contains("placeholder_anon_key")) DEFAULT_ANON_KEY else key
+        }
         set(value) {
             prefs.edit().putString(KEY_SUPABASE_KEY, value).apply()
             _supabaseKey.value = value
@@ -125,7 +131,7 @@ class AppPreferences(context: Context) {
 
     companion object {
         const val DEFAULT_SUPABASE_URL = "https://zennmoughfhennwgecgo.supabase.co"
-        const val DEFAULT_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.placeholder_anon_key"
+        const val DEFAULT_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inplbm5tb3VnaGZoZW5ud2dlY2dvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcwNjI3MjksImV4cCI6MjEwMjYzODcyOX0.xSuD8sYQ4PWgN-YhOaHhwg6hdZYjw2_Jj-XrK3lMERc"
 
         private const val KEY_AUTH_TOKEN = "auth_token"
         private const val KEY_USER_ID = "user_id"

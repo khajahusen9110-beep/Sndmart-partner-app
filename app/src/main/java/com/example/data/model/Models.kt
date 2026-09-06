@@ -116,6 +116,13 @@ data class DeliveryAssignment(
     @Json(name = "delivered_photo_url") val deliveredPhotoUrl: String? = null,
     @Json(name = "batch_id") val batchId: String? = null,
     @Json(name = "batch_code") val batchCode: String? = null,
+    @Json(name = "assigned_at") val assignedAt: String? = null,
+    @Json(name = "accepted_at") val acceptedAt: String? = null,
+    @Json(name = "picked_up_at") val pickedUpAt: String? = null,
+    @Json(name = "delivered_at") val deliveredAt: String? = null,
+    @Json(name = "expires_at") val expiresAt: String? = null,
+    @Json(name = "estimated_delivery_minutes") val estimatedDeliveryMinutes: Int? = null,
+    @Json(name = "delivery_otp") val deliveryOtp: String? = null,
     @Json(name = "created_at") val createdAt: String = "",
     @Json(name = "expires_in_seconds") val expiresInSeconds: Int = 60,
     val details: DeliveryAssignmentDetails? = null
@@ -188,7 +195,10 @@ data class PaymentRequest(
 data class DeliveryPartnerReview(
     val id: String,
     @Json(name = "delivery_partner_id") val deliveryPartnerId: String = "",
+    @Json(name = "customer_id") val customerId: String? = null,
+    @Json(name = "order_id") val orderId: String? = null,
     val rating: Double = 5.0,
+    val comment: String? = null,
     val review: String? = null,
     @Json(name = "customer_name") val customerName: String? = null,
     @Json(name = "created_at") val createdAt: String? = null

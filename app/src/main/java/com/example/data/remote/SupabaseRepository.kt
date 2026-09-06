@@ -64,6 +64,9 @@ class SupabaseRepository(
     private val _notifications = MutableStateFlow<List<InAppNotification>>(emptyList())
     val notifications: StateFlow<List<InAppNotification>> = _notifications.asStateFlow()
 
+    private val _reviews = MutableStateFlow<List<DeliveryPartnerReview>>(emptyList())
+    val reviews: StateFlow<List<DeliveryPartnerReview>> = _reviews.asStateFlow()
+
     private val _lastUpdatedLocation = MutableStateFlow<Pair<Double, Double>?>(null)
     val lastUpdatedLocation: StateFlow<Pair<Double, Double>?> = _lastUpdatedLocation.asStateFlow()
 
@@ -473,13 +476,71 @@ class SupabaseRepository(
         _currentPartner.value = partner
     }
 
+    private fun currentIsoTimestamp(): String {
+        val df = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
+        df.timeZone = TimeZone.getTimeZone("UTC")
+        return df.format(Date())
+    }
+
+    private suspend fun recordStatusHistory(assignmentId: String, status: String, lat: Double?, lng: Double?) {
+        try {
+            val token = prefs.token ?: prefs.customSupabaseKey
+            val partner = _currentPartner.value
+            val historyData = mutableMapOf<String, Any?>(
+                "assignment_id" to assignmentId,
+                "status" to status,
+                "changed_at" to currentIsoTimestamp(),
+                "changed_by" to (prefs.userId ?: partner?.userId ?: partner?.id)
+            )
+            if (lat != null && lng != null) {
+                historyData["latitude"] = lat
+                historyData["longitude"] = lng
+            }
+            apiService.insertStatusHistory(
+                apiKey = prefs.customSupabaseKey,
+                bearerToken = "Bearer $token",
+                data = historyData
+            )
+        } catch (e: Exception) {
+            Log.e("SupabaseRepo", "Failed to insert status history ($status): ${e.message}")
+        }
+    }
+
     // ==========================================
-    // ONLINE / AVAILABILITY / LIVE LOCATION RPCs
+    // ONLINE / AVAILABILITY / LIVE LOCATION
     // ==========================================
 
     suspend fun setOnline(isOnline: Boolean): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
             val token = prefs.token ?: prefs.customSupabaseKey
+            val partner = _currentPartner.value
+            val partnerId = partner?.id ?: prefs.currentPartnerId
+            val (lat, lng) = _lastUpdatedLocation.value ?: Pair(12.9716, 77.5946)
+            val nowIso = currentIsoTimestamp()
+
+            // Update delivery_partners table directly (is_online, is_available, lat, lng, last_location_at)
+            if (!partnerId.isNullOrEmpty()) {
+                val partnerData = mutableMapOf<String, Any?>(
+                    "is_online" to isOnline,
+                    "is_available" to isOnline
+                )
+                if (isOnline) {
+                    partnerData["latitude"] = lat
+                    partnerData["longitude"] = lng
+                    partnerData["last_location_at"] = nowIso
+                }
+                try {
+                    apiService.updateDeliveryPartner(
+                        apiKey = prefs.customSupabaseKey,
+                        bearerToken = "Bearer $token",
+                        idFilter = "eq.$partnerId",
+                        partnerData = partnerData
+                    )
+                } catch (e: Exception) {
+                    Log.d("SupabaseRepo", "Direct updateDeliveryPartner set_online fallback: ${e.message}")
+                }
+            }
+
             try {
                 apiService.rpcSetOnline(
                     apiKey = prefs.customSupabaseKey,
@@ -491,7 +552,7 @@ class SupabaseRepository(
             }
 
             prefs.onlineState = isOnline
-            _currentPartner.update { it?.copy(isOnline = isOnline) }
+            _currentPartner.update { it?.copy(isOnline = isOnline, isAvailable = isOnline) }
 
             if (isOnline) {
                 fetchAssignments()
@@ -509,6 +570,19 @@ class SupabaseRepository(
             val partnerId = partner?.id ?: prefs.currentPartnerId ?: "dp_01"
             val isOnline = partner?.isOnline ?: prefs.onlineState
             val token = prefs.token ?: prefs.customSupabaseKey
+
+            if (!partnerId.isNullOrEmpty()) {
+                try {
+                    apiService.updateDeliveryPartner(
+                        apiKey = prefs.customSupabaseKey,
+                        bearerToken = "Bearer $token",
+                        idFilter = "eq.$partnerId",
+                        partnerData = mapOf("is_available" to isAvailable)
+                    )
+                } catch (e: Exception) {
+                    Log.d("SupabaseRepo", "Direct updateDeliveryPartner is_available: ${e.message}")
+                }
+            }
 
             try {
                 apiService.rpcSetAvailability(
@@ -536,6 +610,27 @@ class SupabaseRepository(
         try {
             _lastUpdatedLocation.value = Pair(lat, lng)
             val token = prefs.token ?: prefs.customSupabaseKey
+            val partner = _currentPartner.value
+            val partnerId = partner?.id ?: prefs.currentPartnerId
+            val nowIso = currentIsoTimestamp()
+
+            // Update delivery_partners table with latitude, longitude, and last_location_at
+            if (!partnerId.isNullOrEmpty()) {
+                try {
+                    apiService.updateDeliveryPartner(
+                        apiKey = prefs.customSupabaseKey,
+                        bearerToken = "Bearer $token",
+                        idFilter = "eq.$partnerId",
+                        partnerData = mapOf(
+                            "latitude" to lat,
+                            "longitude" to lng,
+                            "last_location_at" to nowIso
+                        )
+                    )
+                } catch (e: Exception) {
+                    Log.d("SupabaseRepo", "Direct updateLocation error: ${e.message}")
+                }
+            }
 
             try {
                 apiService.rpcUpdateLocation(
@@ -561,6 +656,33 @@ class SupabaseRepository(
     suspend fun respondToAssignment(assignmentId: String, accept: Boolean): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
             val token = prefs.token ?: prefs.customSupabaseKey
+            val nowIso = currentIsoTimestamp()
+            val newStatus = if (accept) "accepted" else "rejected"
+
+            val updateMap = mutableMapOf<String, Any?>(
+                "status" to newStatus
+            )
+            if (accept) {
+                updateMap["accepted_at"] = nowIso
+            }
+
+            // Update delivery_assignments table directly
+            try {
+                apiService.updateAssignment(
+                    apiKey = prefs.customSupabaseKey,
+                    bearerToken = "Bearer $token",
+                    idFilter = "eq.$assignmentId",
+                    data = updateMap
+                )
+            } catch (e: Exception) {
+                Log.d("SupabaseRepo", "updateAssignment ($newStatus) direct: ${e.message}")
+            }
+
+            // Insert into delivery_status_history
+            val loc = _lastUpdatedLocation.value
+            recordStatusHistory(assignmentId, newStatus, loc?.first, loc?.second)
+
+            // Also call RPC if available
             try {
                 apiService.rpcRespondAssignment(
                     apiKey = prefs.customSupabaseKey,
@@ -580,7 +702,7 @@ class SupabaseRepository(
             if (accept) {
                 _assignments.update { list ->
                     list.map {
-                        if (it.id == assignmentId) it.copy(status = "accepted") else it
+                        if (it.id == assignmentId) it.copy(status = "accepted", acceptedAt = nowIso) else it
                     }
                 }
                 addNotification("Order Accepted", "You have accepted order. Head towards store for pickup.", "order")
@@ -599,6 +721,32 @@ class SupabaseRepository(
     suspend fun markPickedUp(assignmentId: String, pickupPhotoUrl: String): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
             val token = prefs.token ?: prefs.customSupabaseKey
+            val nowIso = currentIsoTimestamp()
+
+            val updateData = mutableMapOf<String, Any?>(
+                "status" to "picked_up",
+                "picked_up_at" to nowIso
+            )
+            if (pickupPhotoUrl.isNotBlank()) {
+                updateData["pickup_photo_url"] = pickupPhotoUrl
+            }
+
+            // Update delivery_assignments directly
+            try {
+                apiService.updateAssignment(
+                    apiKey = prefs.customSupabaseKey,
+                    bearerToken = "Bearer $token",
+                    idFilter = "eq.$assignmentId",
+                    data = updateData
+                )
+            } catch (e: Exception) {
+                Log.d("SupabaseRepo", "updateAssignment picked_up: ${e.message}")
+            }
+
+            // Insert into delivery_status_history
+            val loc = _lastUpdatedLocation.value
+            recordStatusHistory(assignmentId, "picked_up", loc?.first, loc?.second)
+
             try {
                 apiService.rpcMarkPickedUp(
                     apiKey = prefs.customSupabaseKey,
@@ -616,6 +764,7 @@ class SupabaseRepository(
                 list.map {
                     if (it.id == assignmentId) it.copy(
                         status = "picked_up",
+                        pickedUpAt = nowIso,
                         pickupPhotoUrl = pickupPhotoUrl
                     ) else it
                 }
@@ -628,16 +777,55 @@ class SupabaseRepository(
     }
 
     suspend fun startDelivery(assignmentId: String): Result<Boolean> = withContext(Dispatchers.IO) {
-        _assignments.update { list ->
-            list.map {
-                if (it.id == assignmentId) it.copy(status = "out_for_delivery") else it
+        try {
+            val token = prefs.token ?: prefs.customSupabaseKey
+            val target = _assignments.value.find { it.id == assignmentId }
+
+            // Update delivery_assignments table to out_for_delivery
+            try {
+                apiService.updateAssignment(
+                    apiKey = prefs.customSupabaseKey,
+                    bearerToken = "Bearer $token",
+                    idFilter = "eq.$assignmentId",
+                    data = mapOf("status" to "out_for_delivery")
+                )
+            } catch (e: Exception) {
+                Log.d("SupabaseRepo", "updateAssignment out_for_delivery: ${e.message}")
             }
+
+            // Update order status to out_for_delivery to keep order-level status in sync
+            if (target != null && target.orderId.isNotBlank()) {
+                try {
+                    apiService.updateOrder(
+                        apiKey = prefs.customSupabaseKey,
+                        bearerToken = "Bearer $token",
+                        idFilter = "eq.${target.orderId}",
+                        data = mapOf("status" to "out_for_delivery")
+                    )
+                } catch (e: Exception) {
+                    Log.d("SupabaseRepo", "updateOrder out_for_delivery: ${e.message}")
+                }
+            }
+
+            // Record in delivery_status_history
+            val loc = _lastUpdatedLocation.value
+            recordStatusHistory(assignmentId, "out_for_delivery", loc?.first, loc?.second)
+
+            _assignments.update { list ->
+                list.map {
+                    if (it.id == assignmentId) it.copy(status = "out_for_delivery") else it
+                }
+            }
+            addNotification("Out for Delivery", "Navigation active. Reach customer address safely.", "order")
+            Result.success(true)
+        } catch (e: Exception) {
+            Result.failure(e)
         }
-        addNotification("Out for Delivery", "Navigation active. Reach customer address safely.", "order")
-        Result.success(true)
     }
 
     suspend fun arriveAtDrop(assignmentId: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        val loc = _lastUpdatedLocation.value
+        recordStatusHistory(assignmentId, "arrived_drop", loc?.first, loc?.second)
         _assignments.update { list ->
             list.map {
                 if (it.id == assignmentId) it.copy(status = "arrived_drop") else it
@@ -652,17 +840,79 @@ class SupabaseRepository(
         deliveredPhotoUrl: String
     ): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
-            // Verify OTP validation
-            if (otp.length < 4) {
-                return@withContext Result.failure(Exception("Please enter a valid 4 or 6 digit customer delivery OTP"))
-            }
-
             val targetAssignment = _assignments.value.find { it.id == assignmentId }
-            if (targetAssignment == null) {
-                return@withContext Result.failure(Exception("Assignment not found"))
-            }
+                ?: return@withContext Result.failure(Exception("Assignment not found"))
 
             val token = prefs.token ?: prefs.customSupabaseKey
+            val partner = _currentPartner.value
+            val nowIso = currentIsoTimestamp()
+
+            // Verify OTP validation against assignment's delivery_otp
+            val expectedOtp = targetAssignment.deliveryOtp ?: targetAssignment.details?.deliveryOtp
+            val isOtpValid = if (!expectedOtp.isNullOrBlank()) {
+                otp.trim() == expectedOtp.trim()
+            } else {
+                otp.length in 4..6
+            }
+
+            // Always insert into delivery_otp_attempts (success true/false)
+            try {
+                apiService.insertOtpAttempt(
+                    apiKey = prefs.customSupabaseKey,
+                    bearerToken = "Bearer $token",
+                    data = mapOf(
+                        "assignment_id" to assignmentId,
+                        "attempted_by" to (prefs.userId ?: partner?.userId ?: partner?.id),
+                        "success" to isOtpValid,
+                        "attempted_at" to nowIso
+                    )
+                )
+            } catch (e: Exception) {
+                Log.d("SupabaseRepo", "insertOtpAttempt fallback: ${e.message}")
+            }
+
+            if (!isOtpValid) {
+                return@withContext Result.failure(Exception("Incorrect OTP. Please enter the valid customer delivery OTP."))
+            }
+
+            // On success: update assignment status='delivered', delivered_at=now(), optionally delivered_photo_url
+            val assignmentUpdate = mutableMapOf<String, Any?>(
+                "status" to "delivered",
+                "delivered_at" to nowIso
+            )
+            if (deliveredPhotoUrl.isNotBlank()) {
+                assignmentUpdate["delivered_photo_url"] = deliveredPhotoUrl
+            }
+
+            try {
+                apiService.updateAssignment(
+                    apiKey = prefs.customSupabaseKey,
+                    bearerToken = "Bearer $token",
+                    idFilter = "eq.$assignmentId",
+                    data = assignmentUpdate
+                )
+            } catch (e: Exception) {
+                Log.d("SupabaseRepo", "updateAssignment delivered: ${e.message}")
+            }
+
+            // Update order status='delivered' (triggers backend automatic vendor wallet credit and customer notification)
+            if (targetAssignment.orderId.isNotBlank()) {
+                try {
+                    apiService.updateOrder(
+                        apiKey = prefs.customSupabaseKey,
+                        bearerToken = "Bearer $token",
+                        idFilter = "eq.${targetAssignment.orderId}",
+                        data = mapOf("status" to "delivered")
+                    )
+                } catch (e: Exception) {
+                    Log.d("SupabaseRepo", "updateOrder delivered: ${e.message}")
+                }
+            }
+
+            // Insert into delivery_status_history
+            val loc = _lastUpdatedLocation.value
+            recordStatusHistory(assignmentId, "delivered", loc?.first, loc?.second)
+
             try {
                 apiService.rpcCompleteDelivery(
                     apiKey = prefs.customSupabaseKey,
@@ -677,11 +927,12 @@ class SupabaseRepository(
                 Log.d("SupabaseRepo", "RPC delivery_partner_complete_delivery: ${e.message}")
             }
 
-            // Update assignment status
+            // Update assignment status locally
             _assignments.update { list ->
                 list.map {
                     if (it.id == assignmentId) it.copy(
                         status = "delivered",
+                        deliveredAt = nowIso,
                         deliveredPhotoUrl = deliveredPhotoUrl
                     ) else it
                 }
@@ -836,8 +1087,10 @@ class SupabaseRepository(
             }
 
             val partner = _currentPartner.value
+            val partnerId = partner?.id ?: prefs.currentPartnerId ?: "dp_01"
             val method = partner?.payoutMethod ?: "bank"
             val summary = if (method == "upi") "UPI: ${partner?.upiId ?: "partner@upi"}" else "Bank: A/C ending in ${partner?.accountNumber?.takeLast(4) ?: "9876"}"
+            val nowIso = currentIsoTimestamp()
 
             val newReq = PaymentRequest(
                 id = "pay_${UUID.randomUUID().toString().take(8)}",
@@ -849,6 +1102,22 @@ class SupabaseRepository(
             )
 
             val token = prefs.token ?: prefs.customSupabaseKey
+            // Insert directly into delivery_partner_payment_requests table
+            try {
+                apiService.insertPaymentRequest(
+                    apiKey = prefs.customSupabaseKey,
+                    bearerToken = "Bearer $token",
+                    request = mapOf(
+                        "delivery_partner_id" to partnerId,
+                        "amount" to amount,
+                        "status" to "pending",
+                        "created_at" to nowIso
+                    )
+                )
+            } catch (e: Exception) {
+                Log.d("SupabaseRepo", "Direct insertPaymentRequest fallback: ${e.message}")
+            }
+
             try {
                 apiService.rpcRequestPayment(
                     apiKey = prefs.customSupabaseKey,
@@ -877,6 +1146,28 @@ class SupabaseRepository(
     ): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
             val token = prefs.token ?: prefs.customSupabaseKey
+            val partnerId = _currentPartner.value?.id ?: prefs.currentPartnerId ?: return@withContext Result.failure(Exception("No partner ID available"))
+
+            // Upsert directly into delivery_partner_bank_details table
+            try {
+                apiService.upsertBankDetails(
+                    apiKey = prefs.customSupabaseKey,
+                    bearerToken = "Bearer $token",
+                    details = mapOf(
+                        "delivery_partner_id" to partnerId,
+                        "payout_method" to payoutMethod,
+                        "account_holder_name" to holderName,
+                        "account_number" to accountNumber,
+                        "ifsc_code" to ifsc,
+                        "bank_name" to bankName,
+                        "upi_id" to upiId,
+                        "is_verified" to false
+                    )
+                )
+            } catch (e: Exception) {
+                Log.d("SupabaseRepo", "Direct upsertBankDetails table error: ${e.message}")
+            }
+
             try {
                 apiService.rpcUpsertBankDetails(
                     apiKey = prefs.customSupabaseKey,
@@ -914,23 +1205,53 @@ class SupabaseRepository(
     suspend fun registerDeviceToken(fcmToken: String): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
             prefs.fcmDeviceToken = fcmToken
-            val partnerId = _currentPartner.value?.id ?: prefs.currentPartnerId ?: ""
+            val userId = prefs.userId ?: _currentPartner.value?.userId ?: ""
             val token = prefs.token ?: prefs.customSupabaseKey
 
+            // Register into device_tokens table: user_id, user_type='delivery_partner', fcm_token, active=true
             try {
                 apiService.registerDeviceToken(
                     apiKey = prefs.customSupabaseKey,
                     bearerToken = "Bearer $token",
                     tokenData = mapOf(
-                        "token" to fcmToken,
-                        "delivery_partner_id" to partnerId,
-                        "platform" to "android"
+                        "user_id" to userId,
+                        "user_type" to "delivery_partner",
+                        "fcm_token" to fcmToken,
+                        "active" to true
                     )
                 )
                 prefs.isFcmRegistered = true
             } catch (e: Exception) {
-                Log.d("SupabaseRepo", "Device token register hook: ${e.message}")
+                Log.d("SupabaseRepo", "Device token register error: ${e.message}")
             }
+            Result.success(true)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun deactivateDeviceToken(): Result<Boolean> = withContext(Dispatchers.IO) {
+        try {
+            val userId = prefs.userId ?: _currentPartner.value?.userId ?: ""
+            val fcmToken = prefs.fcmDeviceToken
+            val token = prefs.token ?: prefs.customSupabaseKey
+            if (userId.isNotEmpty() && !fcmToken.isNullOrEmpty()) {
+                try {
+                    apiService.registerDeviceToken(
+                        apiKey = prefs.customSupabaseKey,
+                        bearerToken = "Bearer $token",
+                        tokenData = mapOf(
+                            "user_id" to userId,
+                            "user_type" to "delivery_partner",
+                            "fcm_token" to fcmToken,
+                            "active" to false
+                        )
+                    )
+                } catch (e: Exception) {
+                    Log.d("SupabaseRepo", "Device token deactivation error: ${e.message}")
+                }
+            }
+            prefs.isFcmRegistered = false
             Result.success(true)
         } catch (e: Exception) {
             Result.failure(e)
@@ -1055,12 +1376,35 @@ class SupabaseRepository(
         _notifications.value
     }
 
+    suspend fun fetchReviews(): List<DeliveryPartnerReview> = withContext(Dispatchers.IO) {
+        val partnerId = _currentPartner.value?.id ?: prefs.currentPartnerId ?: return@withContext emptyList()
+        val token = prefs.token ?: prefs.customSupabaseKey
+        try {
+            val response = apiService.getReviews(
+                apiKey = prefs.customSupabaseKey,
+                bearerToken = "Bearer $token",
+                partnerIdFilter = "eq.$partnerId"
+            )
+            if (response.isSuccessful && response.body() != null) {
+                val list = response.body()!!
+                _reviews.value = list
+                return@withContext list
+            } else {
+                Log.w("SupabaseRepo", "Fetch reviews error: ${response.code()}")
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseRepo", "Failed to fetch reviews: ${e.message}")
+        }
+        _reviews.value
+    }
+
     suspend fun fetchAllBackendData() = withContext(Dispatchers.IO) {
         fetchAssignments()
         fetchEarnings()
         fetchCashLedger()
         fetchPaymentRequests()
         fetchNotifications()
+        fetchReviews()
     }
 
     fun clearData() {
@@ -1072,6 +1416,7 @@ class SupabaseRepository(
         _cashLedger.value = emptyList()
         _paymentRequests.value = emptyList()
         _notifications.value = emptyList()
+        _reviews.value = emptyList()
         _lastUpdatedLocation.value = null
     }
 
@@ -1097,7 +1442,7 @@ class SupabaseRepository(
         }
     }
 
-    private fun addNotification(title: String, message: String, type: String) {
+    fun addNotification(title: String, message: String, type: String) {
         val notif = InAppNotification(
             id = "notif_${System.currentTimeMillis()}",
             title = title,
@@ -1106,5 +1451,19 @@ class SupabaseRepository(
             createdAt = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
         )
         _notifications.update { listOf(notif) + it }
+    }
+
+    companion object {
+        @Volatile
+        private var INSTANCE: SupabaseRepository? = null
+
+        fun getInstance(context: Context): SupabaseRepository {
+            return INSTANCE ?: synchronized(this) {
+                val appCtx = context.applicationContext
+                val prefs = AppPreferences(appCtx)
+                val db = AppDatabase.getInstance(appCtx)
+                INSTANCE ?: SupabaseRepository(appCtx, prefs, db).also { INSTANCE = it }
+            }
+        }
     }
 }

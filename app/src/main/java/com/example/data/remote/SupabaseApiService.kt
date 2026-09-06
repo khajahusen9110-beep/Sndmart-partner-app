@@ -88,7 +88,7 @@ interface SupabaseApiService {
     ): Response<List<DeliveryPartner>>
 
     @PATCH("rest/v1/delivery_partners")
-    suspend fun updateDeliveryPartner(
+    suspend fun updateDeliveryPartnerByUserId(
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("user_id") userIdFilter: String,
@@ -286,5 +286,59 @@ interface SupabaseApiService {
         @Header("Authorization") bearerToken: String,
         @Header("Prefer") prefer: String = "resolution=merge-duplicates",
         @Body tokenData: Map<String, Any?>
+    ): Response<ResponseBody>
+
+    // Direct table operations per backend spec
+    @PATCH("rest/v1/delivery_assignments")
+    suspend fun updateAssignment(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Query("id") idFilter: String,
+        @Body data: Map<String, Any?>
+    ): Response<ResponseBody>
+
+    @POST("rest/v1/delivery_status_history")
+    suspend fun insertStatusHistory(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Body data: Map<String, Any?>
+    ): Response<ResponseBody>
+
+    @POST("rest/v1/delivery_otp_attempts")
+    suspend fun insertOtpAttempt(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Body data: Map<String, Any?>
+    ): Response<ResponseBody>
+
+    @PATCH("rest/v1/orders")
+    suspend fun updateOrder(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Query("id") idFilter: String,
+        @Body data: Map<String, Any?>
+    ): Response<ResponseBody>
+
+    @PATCH("rest/v1/delivery_partners")
+    suspend fun updateDeliveryPartner(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Query("id") idFilter: String,
+        @Body partnerData: Map<String, Any?>
+    ): Response<ResponseBody>
+
+    @POST("rest/v1/delivery_partner_bank_details?on_conflict=delivery_partner_id")
+    suspend fun upsertBankDetails(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Header("Prefer") prefer: String = "resolution=merge-duplicates",
+        @Body details: Map<String, Any?>
+    ): Response<ResponseBody>
+
+    @POST("rest/v1/delivery_partner_payment_requests")
+    suspend fun insertPaymentRequest(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Body request: Map<String, Any?>
     ): Response<ResponseBody>
 }
