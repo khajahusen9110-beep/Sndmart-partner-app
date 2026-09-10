@@ -24,6 +24,13 @@ class SndmartApplication : Application() {
             } else {
                 Log.d(TAG, "Firebase already initialized")
             }
+
+            // Always keep auto-init disabled to prevent hard failure exceptions
+            // on emulators and unconfigured environments. Tokens are fetched safely on demand.
+            try {
+                com.google.firebase.messaging.FirebaseMessaging.getInstance().isAutoInitEnabled = false
+            } catch (ignored: Exception) {
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Firebase initialization error: ${e.message}", e)
         }

@@ -346,8 +346,8 @@ fun OpenMapsButton(
     val context = LocalContext.current
     Button(
         onClick = {
-            val uri = Uri.parse("google.navigation:q=$destinationLat,$destinationLng&mode=d")
-            val mapIntent = Intent(Intent.ACTION_VIEW, uri).apply {
+            val mapsUri = Uri.parse("https://www.google.com/maps/dir/?api=1&destination=$destinationLat,$destinationLng")
+            val mapIntent = Intent(Intent.ACTION_VIEW, mapsUri).apply {
                 setPackage("com.google.android.apps.maps")
             }
             try {
@@ -355,7 +355,11 @@ fun OpenMapsButton(
             } catch (e: Exception) {
                 // Fallback to browser or standard geo intent
                 val fallbackUri = Uri.parse("geo:$destinationLat,$destinationLng?q=$destinationLat,$destinationLng($label)")
-                context.startActivity(Intent(Intent.ACTION_VIEW, fallbackUri))
+                try {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, fallbackUri))
+                } catch (e2: Exception) {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, mapsUri))
+                }
             }
         },
         modifier = modifier.testTag("navigate_maps_button"),

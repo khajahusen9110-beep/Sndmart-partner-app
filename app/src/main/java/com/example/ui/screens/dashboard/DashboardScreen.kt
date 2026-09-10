@@ -1,5 +1,7 @@
 package com.example.ui.screens.dashboard
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -18,11 +20,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import android.Manifest
+import android.content.pm.PackageManager
 import com.example.data.model.DeliveryAssignment
 import com.example.data.model.DeliveryBatch
 import com.example.data.model.DeliveryPartner
@@ -38,6 +44,7 @@ fun DashboardScreen(
     onNavigateToEarnings: () -> Unit,
     onOpenAssignmentDetail: (DeliveryAssignment) -> Unit
 ) {
+    val context = LocalContext.current
     val isOnline = partner.isOnline
     val isAvailable = partner.isAvailable
     val activeAssignments by viewModel.activeAssignments.collectAsState()
@@ -47,6 +54,18 @@ fun DashboardScreen(
     val isGpsActive by viewModel.isTrackingLocation.collectAsState()
     val currentLocation by viewModel.currentLocation.collectAsState()
     val incomingAlert by viewModel.incomingAssignmentAlert.collectAsState()
+
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val fineGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true
+        val coarseGranted = permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (fineGranted || coarseGranted) {
+            viewModel.goOnlineWithLocation()
+        } else {
+            viewModel.onLocationPermissionDenied()
+        }
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -202,7 +221,31 @@ fun DashboardScreen(
 
                         Switch(
                             checked = isOnline,
-                            onCheckedChange = { viewModel.toggleOnline(it) },
+                            onCheckedChange = { targetOnline ->
+                                if (targetOnline) {
+                                    val hasFine = ContextCompat.checkSelfPermission(
+                                        context,
+                                        Manifest.permission.ACCESS_FINE_LOCATION
+                                    ) == PackageManager.PERMISSION_GRANTED
+                                    val hasCoarse = ContextCompat.checkSelfPermission(
+                                        context,
+                                        Manifest.permission.ACCESS_COARSE_LOCATION
+                                    ) == PackageManager.PERMISSION_GRANTED
+
+                                    if (hasFine || hasCoarse) {
+                                        viewModel.goOnlineWithLocation()
+                                    } else {
+                                        locationPermissionLauncher.launch(
+                                            arrayOf(
+                                                Manifest.permission.ACCESS_FINE_LOCATION,
+                                                Manifest.permission.ACCESS_COARSE_LOCATION
+                                            )
+                                        )
+                                    }
+                                } else {
+                                    viewModel.toggleOffline()
+                                }
+                            },
                             modifier = Modifier.testTag("online_offline_toggle"),
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = EmeraldPrimary,
@@ -216,9 +259,13 @@ fun DashboardScreen(
                     Spacer(modifier = Modifier.height(10.dp))
 
                     Text(
-                        text = if (isOnline) "Receiving quick-commerce orders in your delivery zone. Live GPS is active." else "Go online to receive high-paying delivery assignments.",
+                        text = if (isOnline) {
+                            "Receiving quick-commerce orders in your delivery zone. Live GPS: ${"%.4f".format(currentLocation.first)}, ${"%.4f".format(currentLocation.second)} (Updating continuously every 20s)"
+                        } else {
+                            "Location access is required to receive delivery orders. Switch online above to start receiving assignments."
+                        },
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color.White.copy(alpha = 0.85f)
+                        color = Color.White.copy(alpha = 0.9f)
                     )
 
                     if (isOnline) {

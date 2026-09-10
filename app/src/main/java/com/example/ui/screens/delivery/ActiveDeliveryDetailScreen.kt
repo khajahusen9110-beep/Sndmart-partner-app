@@ -46,6 +46,7 @@ fun ActiveDeliveryDetailScreen(
     var dropPhotoCaptured by remember { mutableStateOf(assignment.deliveredPhotoUrl != null) }
     var showCodCashDialog by remember { mutableStateOf(false) }
     val isActionLoading by viewModel.isActionLoading.collectAsState()
+    val currentLocation by viewModel.currentLocation.collectAsState()
 
     val currentStatus = assignment.status
 
@@ -89,7 +90,14 @@ fun ActiveDeliveryDetailScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Live Route Visualizer Card
+            // Google Maps Live Delivery Route with 3 Markers & Directions Route
+            ActiveDeliveryMapView(
+                assignment = assignment,
+                partnerCurrentLat = currentLocation.first,
+                partnerCurrentLng = currentLocation.second
+            )
+
+            // Step Details Card (Pickup & Drop contact / instructions)
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(18.dp),

@@ -30,6 +30,18 @@ interface SupabaseApiService {
         @Body body: Map<String, String>
     ): Response<ResponseBody>
 
+    @POST("auth/v1/token?grant_type=refresh_token")
+    suspend fun refreshToken(
+        @Header("apikey") apiKey: String,
+        @Body body: Map<String, String>
+    ): Response<ResponseBody>
+
+    @GET("auth/v1/user")
+    suspend fun getUser(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String
+    ): Response<ResponseBody>
+
     @POST("auth/v1/verify")
     suspend fun verifyOtp(
         @Header("apikey") apiKey: String,
@@ -91,6 +103,7 @@ interface SupabaseApiService {
     suspend fun updateDeliveryPartnerByUserId(
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
+        @Header("Prefer") prefer: String = "return=representation",
         @Query("user_id") userIdFilter: String,
         @Body partnerData: Map<String, Any?>
     ): Response<ResponseBody>
@@ -269,14 +282,26 @@ interface SupabaseApiService {
     ): Response<ResponseBody>
 
     // Storage Upload
-    @POST("storage/v1/object/{bucket}/{path}")
+    @POST("storage/v1/object/{bucket}/{folder}/{fileName}")
     suspend fun uploadStorageObject(
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Header("Content-Type") contentType: String = "image/jpeg",
-        @Path(value = "bucket", encoded = true) bucket: String,
-        @Path(value = "path", encoded = true) path: String,
+        @Header("x-upsert") upsert: String = "true",
+        @Path("bucket") bucket: String,
+        @Path("folder") folder: String,
+        @Path("fileName") fileName: String,
         @Body fileBytes: RequestBody
+    ): Response<ResponseBody>
+
+    @POST("storage/v1/object/sign/{bucket}/{folder}/{fileName}")
+    suspend fun createSignedUrl(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Path("bucket") bucket: String,
+        @Path("folder") folder: String,
+        @Path("fileName") fileName: String,
+        @Body body: Map<String, Int>
     ): Response<ResponseBody>
 
     // Device token registration (UPSERT on conflict user_id, user_type)
@@ -323,6 +348,7 @@ interface SupabaseApiService {
     suspend fun updateDeliveryPartner(
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
+        @Header("Prefer") prefer: String = "return=representation",
         @Query("id") idFilter: String,
         @Body partnerData: Map<String, Any?>
     ): Response<ResponseBody>

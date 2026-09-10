@@ -12,6 +12,8 @@ import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -32,13 +34,64 @@ class SupabaseRepository(
         .add(KotlinJsonAdapterFactory())
         .build()
 
-    private val okHttpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .addInterceptor(HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BODY
-        })
-        .build()
+    private val refreshMutex = Mutex()
+
+    private val _dataFetchError = MutableStateFlow<String?>(null)
+    val dataFetchError: StateFlow<String?> = _dataFetchError.asStateFlow()
+
+    private val _isDataLoading = MutableStateFlow(false)
+    val isDataLoading: StateFlow<Boolean> = _isDataLoading.asStateFlow()
+
+    var onSessionExpired: ((String) -> Unit)? = null
+
+    private val okHttpClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .authenticator { _, response ->
+                if (responseCount(response) >= 2) return@authenticator null
+                val path = response.request.url.encodedPath
+                if (path.contains("auth/v1/token") || path.contains("auth/v1/verify") || path.contains("auth/v1/signup")) {
+                    return@authenticator null
+                }
+
+                val currentRefreshToken = prefs.refreshToken
+                if (currentRefreshToken.isNullOrBlank()) {
+                    coroutineScope.launch {
+                        onSessionExpired?.invoke("Your session expired, please log in again")
+                    }
+                    return@authenticator null
+                }
+
+                val refreshSuccess = runBlocking {
+                    refreshSession().isSuccess
+                }
+
+                if (refreshSuccess) {
+                    val newToken = prefs.token
+                    if (!newToken.isNullOrEmpty()) {
+                        return@authenticator response.request.newBuilder()
+                            .header("Authorization", "Bearer $newToken")
+                            .build()
+                    }
+                }
+                null
+            }
+            .addInterceptor(HttpLoggingInterceptor().apply {
+                level = HttpLoggingInterceptor.Level.BODY
+            })
+            .build()
+    }
+
+    private fun responseCount(response: okhttp3.Response): Int {
+        var count = 1
+        var prior = response.priorResponse
+        while (prior != null) {
+            count++
+            prior = prior.priorResponse
+        }
+        return count
+    }
 
     private var apiService: SupabaseApiService = createApiService(prefs.customSupabaseUrl)
 
@@ -97,6 +150,105 @@ class SupabaseRepository(
     // AUTHENTICATION & PROFILE
     // ==========================================
 
+    private fun handleSessionSuccess(json: JSONObject) {
+        val token = json.optString("access_token", null)
+        val refreshToken = json.optString("refresh_token", null)
+        val expiresIn = json.optLong("expires_in", 3600L)
+        if (!token.isNullOrEmpty()) {
+            prefs.token = token
+        }
+        if (!refreshToken.isNullOrEmpty()) {
+            prefs.refreshToken = refreshToken
+        }
+        prefs.tokenExpiresAt = System.currentTimeMillis() + (expiresIn * 1000L)
+
+        val userObj = json.optJSONObject("user")
+        val userId = userObj?.optString("id") ?: json.optString("id")
+        if (!userId.isNullOrEmpty()) {
+            prefs.userId = userId
+        }
+    }
+
+    suspend fun refreshSession(): Result<Boolean> = withContext(Dispatchers.IO) {
+        refreshMutex.withLock {
+            val currentRefreshToken = prefs.refreshToken
+            if (currentRefreshToken.isNullOrBlank()) {
+                Log.w("SupabaseRepo", "No refresh token available to refresh session")
+                return@withContext Result.failure(Exception("No refresh token available"))
+            }
+
+            try {
+                Log.d("SupabaseRepo", "Attempting automatic Supabase session refresh...")
+                val response = apiService.refreshToken(
+                    apiKey = prefs.customSupabaseKey,
+                    body = mapOf("refresh_token" to currentRefreshToken)
+                )
+
+                if (response.isSuccessful && response.body() != null) {
+                    val raw = response.body()!!.string()
+                    val json = JSONObject(raw)
+                    handleSessionSuccess(json)
+                    Log.i("SupabaseRepo", "Supabase session refreshed successfully. Next expiry in ${json.optLong("expires_in", 3600L)}s")
+                    _dataFetchError.value = null
+                    Result.success(true)
+                } else {
+                    val code = response.code()
+                    val err = response.errorBody()?.string()
+                    Log.e("SupabaseRepo", "Session refresh failed with HTTP $code: $err")
+                    if (code == 400 || code == 401) {
+                        prefs.clearSession()
+                        val msg = "Your session expired, please log in again"
+                        _dataFetchError.value = msg
+                        coroutineScope.launch {
+                            onSessionExpired?.invoke(msg)
+                        }
+                    }
+                    Result.failure(Exception("Failed to refresh session (HTTP $code)"))
+                }
+            } catch (e: Exception) {
+                Log.e("SupabaseRepo", "Exception during session refresh: ${e.message}")
+                Result.failure(e)
+            }
+        }
+    }
+
+    suspend fun ensureValidSession(): Result<Boolean> = withContext(Dispatchers.IO) {
+        val token = prefs.token
+        val refreshToken = prefs.refreshToken
+        if (token.isNullOrBlank() && refreshToken.isNullOrBlank()) {
+            return@withContext Result.failure(Exception("No active session"))
+        }
+
+        // Proactively refresh if expiring soon or already expired
+        if (prefs.isSessionExpiringSoon() && !refreshToken.isNullOrBlank()) {
+            Log.d("SupabaseRepo", "Session is expiring soon or expired, refreshing proactively...")
+            val refreshResult = refreshSession()
+            if (refreshResult.isSuccess) {
+                return@withContext Result.success(true)
+            }
+        }
+
+        // Validate token by pinging auth/v1/user
+        if (!token.isNullOrBlank()) {
+            try {
+                val userRes = apiService.getUser(
+                    apiKey = prefs.customSupabaseKey,
+                    bearerToken = "Bearer $token"
+                )
+                if (userRes.isSuccessful) {
+                    return@withContext Result.success(true)
+                } else if (userRes.code() == 401) {
+                    Log.w("SupabaseRepo", "Access token invalid (401), attempting refresh...")
+                    return@withContext refreshSession()
+                }
+            } catch (e: Exception) {
+                Log.w("SupabaseRepo", "Could not verify session online: ${e.message}")
+            }
+        }
+
+        Result.success(true)
+    }
+
     suspend fun signUpWithEmail(email: String, password: String): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
             prefs.userEmail = email
@@ -108,15 +260,7 @@ class SupabaseRepository(
             if (response.isSuccessful && response.body() != null) {
                 val raw = response.body()!!.string()
                 val json = JSONObject(raw)
-                val userObj = json.optJSONObject("user")
-                val userId = userObj?.optString("id") ?: json.optString("id")
-                if (!userId.isNullOrEmpty()) {
-                    prefs.userId = userId
-                }
-                val token = json.optString("access_token", null)
-                if (!token.isNullOrEmpty()) {
-                    prefs.token = token
-                }
+                handleSessionSuccess(json)
                 Result.success(true)
             } else {
                 val errorBody = response.errorBody()?.string()
@@ -137,9 +281,6 @@ class SupabaseRepository(
 
     suspend fun verifyEmailOtp(email: String, otp: String, type: String = "signup"): Result<DeliveryPartner?> = withContext(Dispatchers.IO) {
         try {
-            var token: String? = null
-            var userId: String? = null
-
             // Try verification with 'signup', then fallback to 'email' if needed
             val response = apiService.verifyOtp(
                 apiKey = prefs.customSupabaseKey,
@@ -153,11 +294,8 @@ class SupabaseRepository(
             if (response.isSuccessful && response.body() != null) {
                 val raw = response.body()!!.string()
                 val json = JSONObject(raw)
-                token = json.optString("access_token", null)
-                val userObj = json.optJSONObject("user")
-                if (userObj != null) {
-                    userId = userObj.optString("id", null)
-                }
+                handleSessionSuccess(json)
+                prefs.userEmail = email
             } else {
                 val res2 = apiService.verifyOtp(
                     apiKey = prefs.customSupabaseKey,
@@ -170,11 +308,8 @@ class SupabaseRepository(
                 if (res2.isSuccessful && res2.body() != null) {
                     val raw2 = res2.body()!!.string()
                     val json2 = JSONObject(raw2)
-                    token = json2.optString("access_token", null)
-                    val userObj2 = json2.optJSONObject("user")
-                    if (userObj2 != null) {
-                        userId = userObj2.optString("id", null)
-                    }
+                    handleSessionSuccess(json2)
+                    prefs.userEmail = email
                 } else {
                     val errorBody = res2.errorBody()?.string() ?: response.errorBody()?.string()
                     val errorMsg = try {
@@ -189,11 +324,7 @@ class SupabaseRepository(
                 }
             }
 
-            if (!token.isNullOrEmpty()) prefs.token = token
-            if (!userId.isNullOrEmpty()) prefs.userId = userId
-            prefs.userEmail = email
-
-            val finalUserId = userId ?: prefs.userId
+            val finalUserId = prefs.userId
             if (finalUserId.isNullOrEmpty()) {
                 return@withContext Result.failure(Exception("Verification failed: no user ID received from server."))
             }
@@ -227,8 +358,7 @@ class SupabaseRepository(
                     return@withContext Result.failure(Exception("Login failed: invalid session returned by server."))
                 }
 
-                prefs.token = token
-                prefs.userId = userId
+                handleSessionSuccess(json)
                 prefs.userEmail = email
 
                 val partner = checkPartnerProfile(userId, email, prefs.userPhone ?: "")
@@ -286,38 +416,110 @@ class SupabaseRepository(
         }
     }
 
+    suspend fun getFreshAuthUser(): Result<String> = withContext(Dispatchers.IO) {
+        val token = prefs.token
+        if (!token.isNullOrBlank()) {
+            try {
+                val response = apiService.getUser(
+                    apiKey = prefs.customSupabaseKey,
+                    bearerToken = "Bearer $token"
+                )
+                if (response.isSuccessful && response.body() != null) {
+                    val raw = response.body()!!.string()
+                    val json = JSONObject(raw)
+                    val realId = json.optString("id", "")
+                    if (realId.isNotBlank()) {
+                        prefs.userId = realId
+                        return@withContext Result.success(realId)
+                    }
+                } else if (response.code() == 401) {
+                    val refreshRes = refreshSession()
+                    if (refreshRes.isSuccess) {
+                        val newToken = prefs.token
+                        if (!newToken.isNullOrBlank()) {
+                            val retryRes = apiService.getUser(
+                                apiKey = prefs.customSupabaseKey,
+                                bearerToken = "Bearer $newToken"
+                            )
+                            if (retryRes.isSuccessful && retryRes.body() != null) {
+                                val retryRaw = retryRes.body()!!.string()
+                                val retryJson = JSONObject(retryRaw)
+                                val retryId = retryJson.optString("id", "")
+                                if (retryId.isNotBlank()) {
+                                    prefs.userId = retryId
+                                    return@withContext Result.success(retryId)
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("SupabaseRepo", "getFreshAuthUser online check error: ${e.message}")
+            }
+        }
+
+        val cachedId = prefs.userId
+        if (!cachedId.isNullOrBlank() && cachedId.matches(Regex("^[0-9a-fA-F-]{36}$"))) {
+            return@withContext Result.success(cachedId)
+        }
+
+        Result.failure(Exception("Authentication session missing or invalid. Please log in or verify email."))
+    }
+
     suspend fun uploadKycDocument(
-        fileName: String,
-        fileBytes: ByteArray? = null,
+        documentType: String,
+        fileBytes: ByteArray,
         contentType: String = "image/jpeg"
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
-            val userId = prefs.userId ?: "user_kyc"
-            val bucket = "delivery-kyc-docs"
-            val storagePath = "$userId/$fileName"
-            val token = prefs.token ?: prefs.customSupabaseKey
-
-            if (fileBytes != null && fileBytes.isNotEmpty()) {
-                val requestBody = fileBytes.toRequestBody(contentType.toMediaTypeOrNull())
-                try {
-                    apiService.uploadStorageObject(
-                        apiKey = prefs.customSupabaseKey,
-                        bearerToken = "Bearer $token",
-                        contentType = contentType,
-                        bucket = bucket,
-                        path = storagePath,
-                        fileBytes = requestBody
-                    )
-                } catch (e: Exception) {
-                    Log.d("SupabaseRepo", "Upload kyc storage fallback: ${e.message}")
+            // 1. Confirm user.id is the actual authenticated user's UUID (fetched fresh via supabase.auth.getUser())
+            val userResult = getFreshAuthUser()
+            val userId = userResult.getOrElse {
+                val current = prefs.userId
+                if (!current.isNullOrBlank() && current.matches(Regex("^[0-9a-fA-F-]{36}$"))) {
+                    current
+                } else {
+                    return@withContext Result.failure(Exception("Authentication required: Please log in first to upload KYC documents."))
                 }
             }
 
-            val publicUrl = "${prefs.customSupabaseUrl.removeSuffix("/")}/storage/v1/object/public/$bucket/$storagePath"
-            Result.success(publicUrl)
+            val token = prefs.token ?: prefs.customSupabaseKey
+            val bucket = "delivery-partner-kyc-documents"
+            val timestamp = System.currentTimeMillis()
+            val fileName = "${documentType}-${timestamp}.jpg"
+            val storagePath = "$userId/$fileName"
+
+            val requestBody = fileBytes.toRequestBody(contentType.toMediaTypeOrNull())
+
+            val response = apiService.uploadStorageObject(
+                apiKey = prefs.customSupabaseKey,
+                bearerToken = "Bearer $token",
+                contentType = contentType,
+                upsert = "true",
+                bucket = bucket,
+                folder = userId,
+                fileName = fileName,
+                fileBytes = requestBody
+            )
+
+            if (response.isSuccessful) {
+                Log.d("SupabaseRepo", "KYC document upload success: $bucket/$storagePath")
+                // Save path (not a public URL — this bucket is private) so it can be viewed later
+                Result.success(storagePath)
+            } else {
+                val errBody = response.errorBody()?.string().orEmpty()
+                Log.e("SupabaseRepo", "KYC upload failed ($bucket/$storagePath): $errBody")
+                val errorMsg = try {
+                    val obj = JSONObject(errBody)
+                    obj.optString("message", obj.optString("error", "Storage upload failed (HTTP ${response.code()})"))
+                } catch (e: Exception) {
+                    if (errBody.isNotBlank()) errBody else "Storage upload failed (HTTP ${response.code()})"
+                }
+                Result.failure(Exception(errorMsg))
+            }
         } catch (e: Exception) {
-            val fallbackUrl = "https://images.unsplash.com/photo-1544717305-2782549b5136?w=600"
-            Result.success(fallbackUrl)
+            Log.e("SupabaseRepo", "KYC upload exception: ${e.message}", e)
+            Result.failure(Exception(e.message ?: "Upload request failed. Please check your network connection."))
         }
     }
 
@@ -348,11 +550,22 @@ class SupabaseRepository(
     suspend fun checkPartnerProfile(userId: String, email: String = "", phone: String = ""): DeliveryPartner? = withContext(Dispatchers.IO) {
         try {
             val token = prefs.token ?: prefs.customSupabaseKey
-            val response = apiService.getDeliveryPartnerByUserId(
+            var response = apiService.getDeliveryPartnerByUserId(
                 apiKey = prefs.customSupabaseKey,
                 bearerToken = "Bearer $token",
                 userIdFilter = "eq.$userId"
             )
+            if (response.code() == 401) {
+                val refreshed = refreshSession()
+                if (refreshed.isSuccess) {
+                    val newToken = prefs.token ?: prefs.customSupabaseKey
+                    response = apiService.getDeliveryPartnerByUserId(
+                        apiKey = prefs.customSupabaseKey,
+                        bearerToken = "Bearer $newToken",
+                        userIdFilter = "eq.$userId"
+                    )
+                }
+            }
             if (response.isSuccessful && !response.body().isNullOrEmpty()) {
                 val partner = response.body()!!.first()
                 savePartnerLocally(partner)
@@ -394,7 +607,15 @@ class SupabaseRepository(
         licenceUrl: String?
     ): Result<DeliveryPartner> = withContext(Dispatchers.IO) {
         try {
-            val userId = prefs.userId ?: "user_${System.currentTimeMillis()}"
+            val userResult = getFreshAuthUser()
+            val userId = userResult.getOrElse {
+                val current = prefs.userId
+                if (!current.isNullOrBlank() && current.matches(Regex("^[0-9a-fA-F-]{36}$"))) {
+                    current
+                } else {
+                    return@withContext Result.failure(Exception("Authentication session missing or expired. Please log in again."))
+                }
+            }
             val newPartnerId = "dp_${UUID.randomUUID().toString().take(8)}"
 
             // Normalize vehicle type to DB enum: 'bike' | 'scooter' | 'ev' | 'cycle'
@@ -405,8 +626,9 @@ class SupabaseRepository(
                 else -> "bike"
             }
 
-            val aadharPath = aadharUrl ?: "${prefs.customSupabaseUrl.removeSuffix("/")}/storage/v1/object/public/delivery-partner-kyc-documents/$userId/aadhar.jpg"
-            val licencePath = licenceUrl ?: "${prefs.customSupabaseUrl.removeSuffix("/")}/storage/v1/object/public/delivery-partner-kyc-documents/$userId/license.jpg"
+            // Save the relative storage path (not a public URL — private bucket accessed via signed URLs)
+            val aadharPath = aadharUrl ?: "$userId/aadhar.jpg"
+            val licencePath = licenceUrl ?: "$userId/license.jpg"
 
             val partner = DeliveryPartner(
                 id = newPartnerId,
@@ -428,37 +650,37 @@ class SupabaseRepository(
                 createdAt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
             )
 
-            try {
-                val token = prefs.token ?: prefs.customSupabaseKey
-                // NOTE: Do NOT pass email or approval_status (DB trigger blocks setting approval_status manually)
-                val map = mutableMapOf<String, Any>(
-                    "id" to partner.id,
-                    "user_id" to partner.userId,
-                    "name" to partner.name,
-                    "phone" to partner.phone,
-                    "city_id" to cityId,
-                    "vehicle_type" to normalizedVehicle,
-                    "aadhar_document_url" to aadharPath,
-                    "driving_licence_url" to licencePath
-                )
-                if (normalizedVehicle != "cycle" && vehicleNumber.isNotBlank()) {
-                    map["vehicle_number"] = vehicleNumber
-                }
+            val token = prefs.token ?: prefs.customSupabaseKey
+            // NOTE: Do NOT pass email or approval_status (DB trigger blocks setting approval_status manually)
+            val map = mutableMapOf<String, Any>(
+                "id" to partner.id,
+                "user_id" to partner.userId,
+                "name" to partner.name,
+                "phone" to partner.phone,
+                "city_id" to cityId,
+                "vehicle_type" to normalizedVehicle,
+                "aadhar_document_url" to aadharPath,
+                "driving_licence_url" to licencePath
+            )
+            if (normalizedVehicle != "cycle" && vehicleNumber.isNotBlank()) {
+                map["vehicle_number"] = vehicleNumber
+            }
 
-                val response = apiService.createDeliveryPartner(
-                    apiKey = prefs.customSupabaseKey,
-                    bearerToken = "Bearer $token",
-                    partnerData = map
-                )
-                if (!response.isSuccessful) {
-                    val errBody = response.errorBody()?.string().orEmpty()
-                    Log.w("SupabaseRepo", "Onboarding insert response not successful: $errBody")
-                    if (errBody.contains("verify your email", ignoreCase = true)) {
-                        return@withContext Result.failure(Exception("Please verify your email (OTP) before submitting your application"))
-                    }
+            val response = apiService.createDeliveryPartner(
+                apiKey = prefs.customSupabaseKey,
+                bearerToken = "Bearer $token",
+                partnerData = map
+            )
+            if (!response.isSuccessful) {
+                val errBody = response.errorBody()?.string().orEmpty()
+                Log.w("SupabaseRepo", "Onboarding insert response not successful: $errBody")
+                val errorMsg = try {
+                    val json = JSONObject(errBody)
+                    json.optString("message", json.optString("error", "Application submission failed (HTTP ${response.code()})"))
+                } catch (e: Exception) {
+                    if (errBody.isNotBlank()) errBody else "Application submission failed (HTTP ${response.code()})"
                 }
-            } catch (e: Exception) {
-                Log.d("SupabaseRepo", "Remote onboarding insert: ${e.message}")
+                return@withContext Result.failure(Exception(errorMsg))
             }
 
             savePartnerLocally(partner)
@@ -510,37 +732,84 @@ class SupabaseRepository(
     // ONLINE / AVAILABILITY / LIVE LOCATION
     // ==========================================
 
-    suspend fun setOnline(isOnline: Boolean): Result<Boolean> = withContext(Dispatchers.IO) {
+    suspend fun setOnline(isOnline: Boolean, lat: Double? = null, lng: Double? = null): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
             val token = prefs.token ?: prefs.customSupabaseKey
             val partner = _currentPartner.value
             val partnerId = partner?.id ?: prefs.currentPartnerId
-            val (lat, lng) = _lastUpdatedLocation.value ?: Pair(12.9716, 77.5946)
+            val userId = partner?.userId ?: prefs.userId
+            val effectiveLat = lat ?: _lastUpdatedLocation.value?.first ?: 12.9716
+            val effectiveLng = lng ?: _lastUpdatedLocation.value?.second ?: 77.5946
             val nowIso = currentIsoTimestamp()
 
-            // Update delivery_partners table directly (is_online, is_available, lat, lng, last_location_at)
+            if (isOnline) {
+                _lastUpdatedLocation.value = Pair(effectiveLat, effectiveLng)
+            }
+
+            // Update delivery_partners table directly (latitude, longitude, last_location_at, is_online)
+            val partnerData = mutableMapOf<String, Any?>(
+                "is_online" to isOnline
+            )
+            if (isOnline) {
+                partnerData["latitude"] = effectiveLat
+                partnerData["longitude"] = effectiveLng
+                partnerData["last_location_at"] = nowIso
+                partnerData["is_available"] = true
+            }
+
+            Log.i("SupabaseRepo", "setOnline: isOnline=$isOnline, partnerId=$partnerId, userId=$userId, lat=$effectiveLat, lng=$effectiveLng, lastLocationAt=$nowIso")
+
+            var updated = false
+
+            // 1. Try updating by id
             if (!partnerId.isNullOrEmpty()) {
-                val partnerData = mutableMapOf<String, Any?>(
-                    "is_online" to isOnline,
-                    "is_available" to isOnline
-                )
-                if (isOnline) {
-                    partnerData["latitude"] = lat
-                    partnerData["longitude"] = lng
-                    partnerData["last_location_at"] = nowIso
-                }
                 try {
-                    apiService.updateDeliveryPartner(
+                    val resp = apiService.updateDeliveryPartner(
                         apiKey = prefs.customSupabaseKey,
                         bearerToken = "Bearer $token",
+                        prefer = "return=representation",
                         idFilter = "eq.$partnerId",
                         partnerData = partnerData
                     )
+                    if (resp.isSuccessful) {
+                        val body = resp.body()?.string().orEmpty()
+                        Log.i("SupabaseRepo", "updateDeliveryPartner by id=$partnerId success, resp=$body")
+                        if (body != "[]") {
+                            updated = true
+                        }
+                    } else {
+                        Log.w("SupabaseRepo", "updateDeliveryPartner by id=$partnerId returned code=${resp.code()} err=${resp.errorBody()?.string()}")
+                    }
                 } catch (e: Exception) {
-                    Log.d("SupabaseRepo", "Direct updateDeliveryPartner set_online fallback: ${e.message}")
+                    Log.e("SupabaseRepo", "Direct updateDeliveryPartner set_online by id error: ${e.message}")
                 }
             }
 
+            // 2. Fallback / guarantee: Try updating by user_id
+            if (!updated && !userId.isNullOrEmpty()) {
+                try {
+                    val resp = apiService.updateDeliveryPartnerByUserId(
+                        apiKey = prefs.customSupabaseKey,
+                        bearerToken = "Bearer $token",
+                        prefer = "return=representation",
+                        userIdFilter = "eq.$userId",
+                        partnerData = partnerData
+                    )
+                    if (resp.isSuccessful) {
+                        val body = resp.body()?.string().orEmpty()
+                        Log.i("SupabaseRepo", "updateDeliveryPartner by user_id=$userId success, resp=$body")
+                        if (body != "[]") {
+                            updated = true
+                        }
+                    } else {
+                        Log.w("SupabaseRepo", "updateDeliveryPartner by user_id=$userId returned code=${resp.code()} err=${resp.errorBody()?.string()}")
+                    }
+                } catch (e: Exception) {
+                    Log.e("SupabaseRepo", "Direct updateDeliveryPartner set_online by userId error: ${e.message}")
+                }
+            }
+
+            // Also call RPC delivery_partner_set_online as backup
             try {
                 apiService.rpcSetOnline(
                     apiKey = prefs.customSupabaseKey,
@@ -551,15 +820,41 @@ class SupabaseRepository(
                 Log.d("SupabaseRepo", "RPC delivery_partner_set_online fallback: ${e.message}")
             }
 
-            prefs.onlineState = isOnline
-            _currentPartner.update { it?.copy(isOnline = isOnline, isAvailable = isOnline) }
-
+            // If going online, also trigger RPC update location
             if (isOnline) {
+                try {
+                    apiService.rpcUpdateLocation(
+                        apiKey = prefs.customSupabaseKey,
+                        bearerToken = "Bearer $token",
+                        params = mapOf("p_lat" to effectiveLat, "p_lng" to effectiveLng)
+                    )
+                } catch (e: Exception) {
+                    Log.d("SupabaseRepo", "RPC update location on online toggle: ${e.message}")
+                }
+            }
+
+            prefs.onlineState = isOnline
+            if (isOnline) {
+                prefs.availableState = true
+                _currentPartner.update {
+                    it?.copy(
+                        isOnline = true,
+                        isAvailable = true,
+                        latitude = effectiveLat,
+                        longitude = effectiveLng,
+                        lastLocationAt = nowIso,
+                        currentLat = effectiveLat,
+                        currentLng = effectiveLng
+                    )
+                }
                 fetchAssignments()
+            } else {
+                _currentPartner.update { it?.copy(isOnline = false) }
             }
 
             Result.success(isOnline)
         } catch (e: Exception) {
+            Log.e("SupabaseRepo", "setOnline exception: ${e.message}", e)
             Result.failure(e)
         }
     }
@@ -576,6 +871,7 @@ class SupabaseRepository(
                     apiService.updateDeliveryPartner(
                         apiKey = prefs.customSupabaseKey,
                         bearerToken = "Bearer $token",
+                        prefer = "return=representation",
                         idFilter = "eq.$partnerId",
                         partnerData = mapOf("is_available" to isAvailable)
                     )
@@ -612,23 +908,57 @@ class SupabaseRepository(
             val token = prefs.token ?: prefs.customSupabaseKey
             val partner = _currentPartner.value
             val partnerId = partner?.id ?: prefs.currentPartnerId
+            val userId = partner?.userId ?: prefs.userId
             val nowIso = currentIsoTimestamp()
 
-            // Update delivery_partners table with latitude, longitude, and last_location_at
+            val locationData = mapOf(
+                "latitude" to lat,
+                "longitude" to lng,
+                "last_location_at" to nowIso,
+                "is_online" to true
+            )
+
+            var updated = false
+
+            // Update delivery_partners table directly with latitude, longitude, last_location_at
             if (!partnerId.isNullOrEmpty()) {
                 try {
-                    apiService.updateDeliveryPartner(
+                    val resp = apiService.updateDeliveryPartner(
                         apiKey = prefs.customSupabaseKey,
                         bearerToken = "Bearer $token",
+                        prefer = "return=representation",
                         idFilter = "eq.$partnerId",
-                        partnerData = mapOf(
-                            "latitude" to lat,
-                            "longitude" to lng,
-                            "last_location_at" to nowIso
-                        )
+                        partnerData = locationData
                     )
+                    if (resp.isSuccessful) {
+                        val body = resp.body()?.string().orEmpty()
+                        if (body != "[]") {
+                            updated = true
+                            Log.i("SupabaseRepo", "updateLocation by id=$partnerId success: $lat, $lng, $nowIso")
+                        }
+                    }
                 } catch (e: Exception) {
                     Log.d("SupabaseRepo", "Direct updateLocation error: ${e.message}")
+                }
+            }
+
+            if (!updated && !userId.isNullOrEmpty()) {
+                try {
+                    val resp = apiService.updateDeliveryPartnerByUserId(
+                        apiKey = prefs.customSupabaseKey,
+                        bearerToken = "Bearer $token",
+                        prefer = "return=representation",
+                        userIdFilter = "eq.$userId",
+                        partnerData = locationData
+                    )
+                    if (resp.isSuccessful) {
+                        val body = resp.body()?.string().orEmpty()
+                        if (body != "[]") {
+                            Log.i("SupabaseRepo", "updateLocation by user_id=$userId success: $lat, $lng, $nowIso")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.d("SupabaseRepo", "Direct updateLocation by user_id error: ${e.message}")
                 }
             }
 
@@ -642,7 +972,15 @@ class SupabaseRepository(
                 Log.d("SupabaseRepo", "RPC delivery_partner_update_location: ${e.message}")
             }
 
-            _currentPartner.update { it?.copy(currentLat = lat, currentLng = lng) }
+            _currentPartner.update {
+                it?.copy(
+                    latitude = lat,
+                    longitude = lng,
+                    lastLocationAt = nowIso,
+                    currentLat = lat,
+                    currentLng = lng
+                )
+            }
             Result.success(true)
         } catch (e: Exception) {
             Result.failure(e)
@@ -1209,20 +1547,25 @@ class SupabaseRepository(
             val token = prefs.token ?: prefs.customSupabaseKey
 
             // Register into device_tokens table: user_id, user_type='delivery_partner', fcm_token, active=true
-            try {
-                apiService.registerDeviceToken(
-                    apiKey = prefs.customSupabaseKey,
-                    bearerToken = "Bearer $token",
-                    tokenData = mapOf(
-                        "user_id" to userId,
-                        "user_type" to "delivery_partner",
-                        "fcm_token" to fcmToken,
-                        "active" to true
+            // Only send if user is authenticated with a valid UUID
+            if (userId.isNotBlank() && userId.matches(Regex("^[0-9a-fA-F-]{36}$"))) {
+                try {
+                    apiService.registerDeviceToken(
+                        apiKey = prefs.customSupabaseKey,
+                        bearerToken = "Bearer $token",
+                        tokenData = mapOf(
+                            "user_id" to userId,
+                            "user_type" to "delivery_partner",
+                            "fcm_token" to fcmToken,
+                            "active" to true
+                        )
                     )
-                )
-                prefs.isFcmRegistered = true
-            } catch (e: Exception) {
-                Log.d("SupabaseRepo", "Device token register error: ${e.message}")
+                    prefs.isFcmRegistered = true
+                } catch (e: Exception) {
+                    Log.d("SupabaseRepo", "Device token register error: ${e.message}")
+                }
+            } else {
+                Log.d("SupabaseRepo", "Device token cached locally; will register with backend upon login")
             }
             Result.success(true)
         } catch (e: Exception) {
@@ -1270,20 +1613,41 @@ class SupabaseRepository(
         val partnerId = _currentPartner.value?.id ?: prefs.currentPartnerId ?: return@withContext emptyList()
         val token = prefs.token ?: prefs.customSupabaseKey
         try {
-            val response = apiService.getAssignments(
+            var response = apiService.getAssignments(
                 apiKey = prefs.customSupabaseKey,
                 bearerToken = "Bearer $token",
                 partnerIdFilter = "eq.$partnerId"
             )
+            if (response.code() == 401) {
+                val refreshed = refreshSession()
+                if (refreshed.isSuccess) {
+                    val newToken = prefs.token ?: prefs.customSupabaseKey
+                    response = apiService.getAssignments(
+                        apiKey = prefs.customSupabaseKey,
+                        bearerToken = "Bearer $newToken",
+                        partnerIdFilter = "eq.$partnerId"
+                    )
+                } else {
+                    val msg = "Your session expired, please log in again"
+                    _dataFetchError.value = msg
+                    coroutineScope.launch { onSessionExpired?.invoke(msg) }
+                    return@withContext _assignments.value
+                }
+            }
+
             if (response.isSuccessful && response.body() != null) {
                 val list = response.body()!!
                 _assignments.value = list
+                _dataFetchError.value = null
                 return@withContext list
             } else {
-                Log.w("SupabaseRepo", "Fetch assignments error: ${response.code()}")
+                val code = response.code()
+                Log.w("SupabaseRepo", "Fetch assignments error: $code")
+                _dataFetchError.value = "Unable to sync deliveries from server (Code $code)"
             }
         } catch (e: Exception) {
             Log.e("SupabaseRepo", "Failed to fetch assignments from backend: ${e.message}")
+            _dataFetchError.value = "Network connection error while fetching deliveries"
         }
         _assignments.value
     }
@@ -1292,20 +1656,41 @@ class SupabaseRepository(
         val partnerId = _currentPartner.value?.id ?: prefs.currentPartnerId ?: return@withContext emptyList()
         val token = prefs.token ?: prefs.customSupabaseKey
         try {
-            val response = apiService.getEarnings(
+            var response = apiService.getEarnings(
                 apiKey = prefs.customSupabaseKey,
                 bearerToken = "Bearer $token",
                 partnerIdFilter = "eq.$partnerId"
             )
+            if (response.code() == 401) {
+                val refreshed = refreshSession()
+                if (refreshed.isSuccess) {
+                    val newToken = prefs.token ?: prefs.customSupabaseKey
+                    response = apiService.getEarnings(
+                        apiKey = prefs.customSupabaseKey,
+                        bearerToken = "Bearer $newToken",
+                        partnerIdFilter = "eq.$partnerId"
+                    )
+                } else {
+                    val msg = "Your session expired, please log in again"
+                    _dataFetchError.value = msg
+                    coroutineScope.launch { onSessionExpired?.invoke(msg) }
+                    return@withContext _earnings.value
+                }
+            }
+
             if (response.isSuccessful && response.body() != null) {
                 val list = response.body()!!
                 _earnings.value = list
+                _dataFetchError.value = null
                 return@withContext list
             } else {
-                Log.w("SupabaseRepo", "Fetch earnings error: ${response.code()}")
+                val code = response.code()
+                Log.w("SupabaseRepo", "Fetch earnings error: $code")
+                _dataFetchError.value = "Unable to sync earnings from server (Code $code)"
             }
         } catch (e: Exception) {
             Log.e("SupabaseRepo", "Failed to fetch earnings from backend: ${e.message}")
+            _dataFetchError.value = "Network connection error while fetching earnings"
         }
         _earnings.value
     }
@@ -1314,20 +1699,41 @@ class SupabaseRepository(
         val partnerId = _currentPartner.value?.id ?: prefs.currentPartnerId ?: return@withContext emptyList()
         val token = prefs.token ?: prefs.customSupabaseKey
         try {
-            val response = apiService.getCashLedger(
+            var response = apiService.getCashLedger(
                 apiKey = prefs.customSupabaseKey,
                 bearerToken = "Bearer $token",
                 partnerIdFilter = "eq.$partnerId"
             )
+            if (response.code() == 401) {
+                val refreshed = refreshSession()
+                if (refreshed.isSuccess) {
+                    val newToken = prefs.token ?: prefs.customSupabaseKey
+                    response = apiService.getCashLedger(
+                        apiKey = prefs.customSupabaseKey,
+                        bearerToken = "Bearer $newToken",
+                        partnerIdFilter = "eq.$partnerId"
+                    )
+                } else {
+                    val msg = "Your session expired, please log in again"
+                    _dataFetchError.value = msg
+                    coroutineScope.launch { onSessionExpired?.invoke(msg) }
+                    return@withContext _cashLedger.value
+                }
+            }
+
             if (response.isSuccessful && response.body() != null) {
                 val list = response.body()!!
                 _cashLedger.value = list
+                _dataFetchError.value = null
                 return@withContext list
             } else {
-                Log.w("SupabaseRepo", "Fetch cash ledger error: ${response.code()}")
+                val code = response.code()
+                Log.w("SupabaseRepo", "Fetch cash ledger error: $code")
+                _dataFetchError.value = "Unable to sync cash ledger from server (Code $code)"
             }
         } catch (e: Exception) {
             Log.e("SupabaseRepo", "Failed to fetch cash ledger from backend: ${e.message}")
+            _dataFetchError.value = "Network connection error while fetching cash ledger"
         }
         _cashLedger.value
     }
@@ -1336,20 +1742,41 @@ class SupabaseRepository(
         val partnerId = _currentPartner.value?.id ?: prefs.currentPartnerId ?: return@withContext emptyList()
         val token = prefs.token ?: prefs.customSupabaseKey
         try {
-            val response = apiService.getPaymentRequests(
+            var response = apiService.getPaymentRequests(
                 apiKey = prefs.customSupabaseKey,
                 bearerToken = "Bearer $token",
                 partnerIdFilter = "eq.$partnerId"
             )
+            if (response.code() == 401) {
+                val refreshed = refreshSession()
+                if (refreshed.isSuccess) {
+                    val newToken = prefs.token ?: prefs.customSupabaseKey
+                    response = apiService.getPaymentRequests(
+                        apiKey = prefs.customSupabaseKey,
+                        bearerToken = "Bearer $newToken",
+                        partnerIdFilter = "eq.$partnerId"
+                    )
+                } else {
+                    val msg = "Your session expired, please log in again"
+                    _dataFetchError.value = msg
+                    coroutineScope.launch { onSessionExpired?.invoke(msg) }
+                    return@withContext _paymentRequests.value
+                }
+            }
+
             if (response.isSuccessful && response.body() != null) {
                 val list = response.body()!!
                 _paymentRequests.value = list
+                _dataFetchError.value = null
                 return@withContext list
             } else {
-                Log.w("SupabaseRepo", "Fetch payment requests error: ${response.code()}")
+                val code = response.code()
+                Log.w("SupabaseRepo", "Fetch payment requests error: $code")
+                _dataFetchError.value = "Unable to sync payout requests from server (Code $code)"
             }
         } catch (e: Exception) {
             Log.e("SupabaseRepo", "Failed to fetch payment requests from backend: ${e.message}")
+            _dataFetchError.value = "Network connection error while fetching payment requests"
         }
         _paymentRequests.value
     }
@@ -1358,20 +1785,41 @@ class SupabaseRepository(
         val userId = prefs.userId ?: return@withContext emptyList()
         val token = prefs.token ?: prefs.customSupabaseKey
         try {
-            val response = apiService.getNotifications(
+            var response = apiService.getNotifications(
                 apiKey = prefs.customSupabaseKey,
                 bearerToken = "Bearer $token",
                 userIdFilter = "eq.$userId"
             )
+            if (response.code() == 401) {
+                val refreshed = refreshSession()
+                if (refreshed.isSuccess) {
+                    val newToken = prefs.token ?: prefs.customSupabaseKey
+                    response = apiService.getNotifications(
+                        apiKey = prefs.customSupabaseKey,
+                        bearerToken = "Bearer $newToken",
+                        userIdFilter = "eq.$userId"
+                    )
+                } else {
+                    val msg = "Your session expired, please log in again"
+                    _dataFetchError.value = msg
+                    coroutineScope.launch { onSessionExpired?.invoke(msg) }
+                    return@withContext _notifications.value
+                }
+            }
+
             if (response.isSuccessful && response.body() != null) {
                 val list = response.body()!!
                 _notifications.value = list
+                _dataFetchError.value = null
                 return@withContext list
             } else {
-                Log.w("SupabaseRepo", "Fetch notifications error: ${response.code()}")
+                val code = response.code()
+                Log.w("SupabaseRepo", "Fetch notifications error: $code")
+                _dataFetchError.value = "Unable to sync notifications from server (Code $code)"
             }
         } catch (e: Exception) {
             Log.e("SupabaseRepo", "Failed to fetch notifications from backend: ${e.message}")
+            _dataFetchError.value = "Network connection error while fetching notifications"
         }
         _notifications.value
     }
@@ -1380,31 +1828,58 @@ class SupabaseRepository(
         val partnerId = _currentPartner.value?.id ?: prefs.currentPartnerId ?: return@withContext emptyList()
         val token = prefs.token ?: prefs.customSupabaseKey
         try {
-            val response = apiService.getReviews(
+            var response = apiService.getReviews(
                 apiKey = prefs.customSupabaseKey,
                 bearerToken = "Bearer $token",
                 partnerIdFilter = "eq.$partnerId"
             )
+            if (response.code() == 401) {
+                val refreshed = refreshSession()
+                if (refreshed.isSuccess) {
+                    val newToken = prefs.token ?: prefs.customSupabaseKey
+                    response = apiService.getReviews(
+                        apiKey = prefs.customSupabaseKey,
+                        bearerToken = "Bearer $newToken",
+                        partnerIdFilter = "eq.$partnerId"
+                    )
+                } else {
+                    val msg = "Your session expired, please log in again"
+                    _dataFetchError.value = msg
+                    coroutineScope.launch { onSessionExpired?.invoke(msg) }
+                    return@withContext _reviews.value
+                }
+            }
+
             if (response.isSuccessful && response.body() != null) {
                 val list = response.body()!!
                 _reviews.value = list
+                _dataFetchError.value = null
                 return@withContext list
             } else {
-                Log.w("SupabaseRepo", "Fetch reviews error: ${response.code()}")
+                val code = response.code()
+                Log.w("SupabaseRepo", "Fetch reviews error: $code")
+                _dataFetchError.value = "Unable to sync reviews from server (Code $code)"
             }
         } catch (e: Exception) {
             Log.e("SupabaseRepo", "Failed to fetch reviews: ${e.message}")
+            _dataFetchError.value = "Network connection error while fetching reviews"
         }
         _reviews.value
     }
 
     suspend fun fetchAllBackendData() = withContext(Dispatchers.IO) {
-        fetchAssignments()
-        fetchEarnings()
-        fetchCashLedger()
-        fetchPaymentRequests()
-        fetchNotifications()
-        fetchReviews()
+        _isDataLoading.value = true
+        try {
+            ensureValidSession()
+            fetchAssignments()
+            fetchEarnings()
+            fetchCashLedger()
+            fetchPaymentRequests()
+            fetchNotifications()
+            fetchReviews()
+        } finally {
+            _isDataLoading.value = false
+        }
     }
 
     fun clearData() {

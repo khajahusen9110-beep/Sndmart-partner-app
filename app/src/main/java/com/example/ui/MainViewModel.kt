@@ -64,6 +64,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _userMessage = MutableStateFlow<String?>(null)
     val userMessage: StateFlow<String?> = _userMessage.asStateFlow()
 
+    val dataFetchError = repository.dataFetchError
+    val isDataLoading = repository.isDataLoading
+
     val activeAssignments = assignments.map { list ->
         list.filter { it.status in listOf("assigned", "accepted", "arrived_pickup", "picked_up", "out_for_delivery", "arrived_drop") }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -99,6 +102,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val cities: StateFlow<List<City>> = _cities.asStateFlow()
 
     init {
+        repository.onSessionExpired = { reason ->
+            viewModelScope.launch {
+                locationTracker.stopTracking()
+                repository.clearData()
+                prefs.clearSession()
+                _authUiState.value = AuthUiState.Unauthenticated
+                showMessage(reason)
+            }
+        }
         checkInitialSession()
         loadCities()
     }
@@ -112,10 +124,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun checkInitialSession() {
         viewModelScope.launch {
-            delay(400)
+            delay(300)
             val token = prefs.token
+            val refreshToken = prefs.refreshToken
             val userId = prefs.userId
-            if (!token.isNullOrBlank() && !userId.isNullOrBlank()) {
+            if ((!token.isNullOrBlank() || !refreshToken.isNullOrBlank()) && !userId.isNullOrBlank()) {
+                val sessionValid = repository.ensureValidSession().isSuccess
+                if (!sessionValid) {
+                    locationTracker.stopTracking()
+                    repository.clearData()
+                    prefs.clearSession()
+                    _authUiState.value = AuthUiState.Unauthenticated
+                    showMessage("Your session expired, please log in again")
+                    return@launch
+                }
                 val partner = repository.checkPartnerProfile(userId, prefs.userEmail ?: "", prefs.userPhone ?: "")
                 if (partner == null) {
                     _authUiState.value = AuthUiState.OnboardingRequired
@@ -124,6 +146,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } else {
                 _authUiState.value = AuthUiState.Unauthenticated
+            }
+        }
+    }
+
+    fun onAppResume() {
+        viewModelScope.launch {
+            if (_authUiState.value is AuthUiState.Authenticated || _authUiState.value is AuthUiState.UnderReview) {
+                val sessionValid = repository.ensureValidSession().isSuccess
+                if (!sessionValid) {
+                    locationTracker.stopTracking()
+                    repository.clearData()
+                    prefs.clearSession()
+                    _authUiState.value = AuthUiState.Unauthenticated
+                    showMessage("Your session expired, please log in again")
+                } else {
+                    repository.fetchAllBackendData()
+                }
             }
         }
     }
@@ -308,6 +347,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _authUiState.value = AuthUiState.OnboardingRequired
     }
 
+    suspend fun uploadKycDocument(documentType: String, bytes: ByteArray): Result<String> {
+        return repository.uploadKycDocument(documentType, bytes)
+    }
+
+    suspend fun getFreshAuthUserId(): String? {
+        return repository.getFreshAuthUser().getOrNull() ?: prefs.userId
+    }
+
     fun submitOnboarding(
         name: String,
         phone: String,
@@ -351,22 +398,70 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun toggleOnline(online: Boolean) {
+    fun goOnlineWithLocation() {
         viewModelScope.launch {
-            val res = repository.setOnline(online)
+            _isActionLoading.value = true
+            // 1. Immediately get current GPS coordinates
+            val (lat, lng) = locationTracker.getCurrentGpsLocation()
+            Log.i("MainViewModel", "Going online with GPS coordinates: lat=$lat, lng=$lng")
+            
+            // 2. Immediately write location, timestamp, and is_online to database
+            val res = repository.setOnline(isOnline = true, lat = lat, lng = lng)
+            _isActionLoading.value = false
             res.onSuccess {
                 val current = _authUiState.value
                 if (current is AuthUiState.Authenticated) {
-                    _authUiState.value = AuthUiState.Authenticated(current.partner.copy(isOnline = online))
+                    _authUiState.value = AuthUiState.Authenticated(
+                        current.partner.copy(
+                            isOnline = true,
+                            isAvailable = true,
+                            latitude = lat,
+                            longitude = lng,
+                            currentLat = lat,
+                            currentLng = lng
+                        )
+                    )
                 }
-                if (online) {
-                    locationTracker.startTracking()
-                    showMessage("You are now ONLINE & ready for orders")
-                } else {
-                    locationTracker.stopTracking()
-                    showMessage("You are now OFFLINE")
-                }
+                // 3. Start continuous tracking (every 20s)
+                locationTracker.startTracking(updateIntervalSeconds = 20L)
+                showMessage("You are now ONLINE. Live GPS location active.")
+            }.onFailure { err ->
+                showMessage("Failed to go online: ${err.message ?: "Network error"}")
             }
+        }
+    }
+
+    fun toggleOffline() {
+        viewModelScope.launch {
+            _isActionLoading.value = true
+            locationTracker.stopTracking()
+            val res = repository.setOnline(isOnline = false)
+            _isActionLoading.value = false
+            res.onSuccess {
+                val current = _authUiState.value
+                if (current is AuthUiState.Authenticated) {
+                    _authUiState.value = AuthUiState.Authenticated(current.partner.copy(isOnline = false))
+                }
+                showMessage("You are now OFFLINE")
+            }.onFailure { err ->
+                showMessage("Failed to go offline: ${err.message ?: "Network error"}")
+            }
+        }
+    }
+
+    fun onLocationPermissionDenied() {
+        showMessage("Location access is required to receive delivery orders")
+    }
+
+    fun toggleOnline(online: Boolean) {
+        if (online) {
+            if (locationTracker.hasLocationPermission()) {
+                goOnlineWithLocation()
+            } else {
+                onLocationPermissionDenied()
+            }
+        } else {
+            toggleOffline()
         }
     }
 
@@ -473,31 +568,68 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun fetchAndRegisterFcmToken(showToast: Boolean = false) {
+        val app = getApplication<Application>()
         try {
-            FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
-                if (task.isSuccessful && !task.result.isNullOrBlank()) {
-                    val token = task.result!!
-                    Log.d("MainViewModel", "Fetched FCM token: $token")
-                    prefs.fcmDeviceToken = token
-                    _fcmTokenState.value = token
-                    viewModelScope.launch {
-                        repository.registerDeviceToken(token)
-                        if (showToast) {
-                            showMessage("FCM token registered with backend!")
-                        }
-                    }
-                } else {
-                    Log.w("MainViewModel", "Failed to retrieve FCM token: ${task.exception?.message}")
-                    val fallback = prefs.fcmDeviceToken
-                    if (fallback.isNotBlank()) {
-                        _fcmTokenState.value = fallback
-                        viewModelScope.launch {
-                            repository.registerDeviceToken(fallback)
-                        }
-                    }
+            if (com.example.util.DeviceUtils.isEmulator()) {
+                Log.d("MainViewModel", "Emulator detected: Using persistent local device token for delivery assignments & alerts")
+                val fallback = prefs.fcmDeviceToken
+                _fcmTokenState.value = fallback
+                viewModelScope.launch {
+                    repository.registerDeviceToken(fallback)
                     if (showToast) {
-                        showMessage("Using active local device token: ${fallback.take(12)}...")
+                        showMessage("Device token registered: ${fallback.take(16)}...")
                     }
+                }
+                return
+            }
+
+            val availability = com.google.android.gms.common.GoogleApiAvailability.getInstance()
+            val resultCode = availability.isGooglePlayServicesAvailable(app)
+            val hasPlayServices = resultCode == com.google.android.gms.common.ConnectionResult.SUCCESS
+
+            if (!hasPlayServices) {
+                Log.w("MainViewModel", "Google Play Services not available (code: $resultCode). Using persistent local device token.")
+                val fallback = prefs.fcmDeviceToken
+                _fcmTokenState.value = fallback
+                viewModelScope.launch {
+                    repository.registerDeviceToken(fallback)
+                    if (showToast) {
+                        showMessage("Device token registered: ${fallback.take(16)}...")
+                    }
+                }
+                return
+            }
+
+            FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+                try {
+                    if (task.isSuccessful && !task.result.isNullOrBlank()) {
+                        val token = task.result!!
+                        Log.d("MainViewModel", "Fetched FCM token: $token")
+                        prefs.fcmDeviceToken = token
+                        _fcmTokenState.value = token
+                        viewModelScope.launch {
+                            repository.registerDeviceToken(token)
+                            if (showToast) {
+                                showMessage("FCM token registered with backend!")
+                            }
+                        }
+                    } else {
+                        Log.w("MainViewModel", "FCM token retrieval not available: ${task.exception?.message}")
+                        val fallback = prefs.fcmDeviceToken
+                        if (fallback.isNotBlank()) {
+                            _fcmTokenState.value = fallback
+                            viewModelScope.launch {
+                                repository.registerDeviceToken(fallback)
+                            }
+                        }
+                        if (showToast) {
+                            showMessage("Using active local device token: ${fallback.take(16)}...")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("MainViewModel", "FCM token handling error: ${e.message}")
+                    val fallback = prefs.fcmDeviceToken
+                    _fcmTokenState.value = fallback
                 }
             }
         } catch (e: Exception) {
@@ -508,7 +640,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 repository.registerDeviceToken(fallback)
             }
             if (showToast) {
-                showMessage("Device token: ${fallback.take(12)}...")
+                showMessage("Device token: ${fallback.take(16)}...")
             }
         }
     }

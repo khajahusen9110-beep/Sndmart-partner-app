@@ -61,6 +61,11 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onResume() {
+        super.onResume()
+        viewModel.onAppResume()
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -71,6 +76,8 @@ fun MainAppRoot(viewModel: MainViewModel) {
     val incomingAlert by viewModel.incomingAssignmentAlert.collectAsState()
     val selectedAssignment by viewModel.selectedAssignmentForDetail.collectAsState()
     val notifications by viewModel.notifications.collectAsState()
+    val dataFetchError by viewModel.dataFetchError.collectAsState()
+    val isDataLoading by viewModel.isDataLoading.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
     var showNotificationsSheet by remember { mutableStateOf(false) }
@@ -209,42 +216,93 @@ fun MainAppRoot(viewModel: MainViewModel) {
                             }
                         }
                     ) { innerPadding ->
-                        Box(
+                        Column(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(innerPadding)
                         ) {
-                            when (currentTab) {
-                                MainNavigationTab.DASHBOARD -> {
-                                    DashboardScreen(
-                                        partner = partner,
-                                        viewModel = viewModel,
-                                        onNavigateToDeliveries = { currentTab = MainNavigationTab.DELIVERIES },
-                                        onNavigateToEarnings = { currentTab = MainNavigationTab.EARNINGS },
-                                        onOpenAssignmentDetail = { assignment ->
-                                            viewModel.selectAssignmentForDetail(assignment)
+                            AnimatedVisibility(
+                                visible = dataFetchError != null,
+                                enter = expandVertically() + fadeIn(),
+                                exit = shrinkVertically() + fadeOut()
+                            ) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.errorContainer,
+                                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.weight(1f),
+                                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Warning,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.error,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = dataFetchError ?: "",
+                                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium)
+                                            )
                                         }
-                                    )
-                                }
-
-                                MainNavigationTab.DELIVERIES -> {
-                                    DeliveriesScreen(
-                                        viewModel = viewModel,
-                                        onOpenAssignmentDetail = { assignment ->
-                                            viewModel.selectAssignmentForDetail(assignment)
+                                        TextButton(
+                                            onClick = { viewModel.refreshAllData() }
+                                        ) {
+                                            Text("Retry", fontWeight = FontWeight.Bold)
                                         }
-                                    )
+                                    }
                                 }
+                            }
 
-                                MainNavigationTab.EARNINGS -> {
-                                    EarningsScreen(viewModel = viewModel)
-                                }
+                            if (isDataLoading) {
+                                LinearProgressIndicator(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = EmeraldPrimary
+                                )
+                            }
 
-                                MainNavigationTab.PROFILE -> {
-                                    ProfileScreen(
-                                        partner = partner,
-                                        viewModel = viewModel
-                                    )
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                when (currentTab) {
+                                    MainNavigationTab.DASHBOARD -> {
+                                        DashboardScreen(
+                                            partner = partner,
+                                            viewModel = viewModel,
+                                            onNavigateToDeliveries = { currentTab = MainNavigationTab.DELIVERIES },
+                                            onNavigateToEarnings = { currentTab = MainNavigationTab.EARNINGS },
+                                            onOpenAssignmentDetail = { assignment ->
+                                                viewModel.selectAssignmentForDetail(assignment)
+                                            }
+                                        )
+                                    }
+
+                                    MainNavigationTab.DELIVERIES -> {
+                                        DeliveriesScreen(
+                                            viewModel = viewModel,
+                                            onOpenAssignmentDetail = { assignment ->
+                                                viewModel.selectAssignmentForDetail(assignment)
+                                            }
+                                        )
+                                    }
+
+                                    MainNavigationTab.EARNINGS -> {
+                                        EarningsScreen(viewModel = viewModel)
+                                    }
+
+                                    MainNavigationTab.PROFILE -> {
+                                        ProfileScreen(
+                                            partner = partner,
+                                            viewModel = viewModel
+                                        )
+                                    }
                                 }
                             }
                         }

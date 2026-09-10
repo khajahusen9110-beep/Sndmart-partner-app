@@ -1,5 +1,6 @@
 package com.example.data.location
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
@@ -7,32 +8,53 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Bundle
+import android.os.Looper
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.example.data.remote.SupabaseRepository
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationResult
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlin.random.Random
+import kotlin.coroutines.resume
 
 class LocationTracker(
     private val context: Context,
     private val repository: SupabaseRepository
 ) {
+    private val fusedLocationClient: FusedLocationProviderClient =
+        LocationServices.getFusedLocationProviderClient(context)
     private val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
     private val coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var trackingJob: Job? = null
 
-    private val _currentLocation = MutableStateFlow<Pair<Double, Double>>(Pair(12.9716, 77.5946)) // Bengaluru default
+    // Default to Bengaluru central darkstore hub (12.9716, 77.5946)
+    private val _currentLocation = MutableStateFlow<Pair<Double, Double>>(Pair(12.9716, 77.5946))
     val currentLocation: StateFlow<Pair<Double, Double>> = _currentLocation.asStateFlow()
 
     private val _isTracking = MutableStateFlow(false)
     val isTracking: StateFlow<Boolean> = _isTracking.asStateFlow()
 
-    private val locationListener = object : LocationListener {
+    private val fusedLocationCallback = object : LocationCallback() {
+        override fun onLocationResult(result: LocationResult) {
+            val loc = result.lastLocation ?: return
+            if (loc.latitude != 0.0 && loc.longitude != 0.0) {
+                updateCoordinates(loc.latitude, loc.longitude)
+            }
+        }
+    }
+
+    private val legacyLocationListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
-            updateCoordinates(location.latitude, location.longitude)
+            if (location.latitude != 0.0 && location.longitude != 0.0) {
+                updateCoordinates(location.latitude, location.longitude)
+            }
         }
         @Deprecated("Deprecated in Java")
         override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
@@ -40,59 +62,131 @@ class LocationTracker(
         override fun onProviderDisabled(provider: String) {}
     }
 
+    fun hasLocationPermission(): Boolean {
+        val fine = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        val coarse = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        return fine || coarse
+    }
+
+    @SuppressLint("MissingPermission")
+    suspend fun getCurrentGpsLocation(): Pair<Double, Double> {
+        if (!hasLocationPermission()) {
+            return _currentLocation.value
+        }
+
+        // 1. Try Google Play Services Fused Location Provider (high accuracy current location)
+        try {
+            val cancelTokenSource = com.google.android.gms.tasks.CancellationTokenSource()
+            val task = fusedLocationClient.getCurrentLocation(
+                Priority.PRIORITY_HIGH_ACCURACY,
+                cancelTokenSource.token
+            )
+            val loc = task.awaitTask()
+            if (loc != null && loc.latitude != 0.0 && loc.longitude != 0.0) {
+                updateCoordinates(loc.latitude, loc.longitude)
+                return Pair(loc.latitude, loc.longitude)
+            }
+        } catch (e: Exception) {
+            Log.w("LocationTracker", "Fused getCurrentLocation failed: ${e.message}")
+        }
+
+        // 2. Try Fused lastLocation
+        try {
+            val lastTask = fusedLocationClient.lastLocation
+            val loc = lastTask.awaitTask()
+            if (loc != null && loc.latitude != 0.0 && loc.longitude != 0.0) {
+                updateCoordinates(loc.latitude, loc.longitude)
+                return Pair(loc.latitude, loc.longitude)
+            }
+        } catch (e: Exception) {
+            Log.w("LocationTracker", "Fused lastLocation failed: ${e.message}")
+        }
+
+        // 3. Try Android LocationManager providers as fallback
+        try {
+            locationManager?.let { lm ->
+                val gpsLoc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                if (gpsLoc != null && gpsLoc.latitude != 0.0 && gpsLoc.longitude != 0.0) {
+                    updateCoordinates(gpsLoc.latitude, gpsLoc.longitude)
+                    return Pair(gpsLoc.latitude, gpsLoc.longitude)
+                }
+                val netLoc = lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+                if (netLoc != null && netLoc.latitude != 0.0 && netLoc.longitude != 0.0) {
+                    updateCoordinates(netLoc.latitude, netLoc.longitude)
+                    return Pair(netLoc.latitude, netLoc.longitude)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("LocationTracker", "LocationManager fallback failed: ${e.message}")
+        }
+
+        return _currentLocation.value
+    }
+
+    @SuppressLint("MissingPermission")
     fun startTracking(updateIntervalSeconds: Long = 20L) {
         if (_isTracking.value) return
         _isTracking.value = true
 
-        val hasFineLocation = ContextCompat.checkSelfPermission(
-            context,
-            android.Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
+        if (hasLocationPermission()) {
+            // Register Fused Location updates (every 20s, min 10s)
+            try {
+                val locationRequest = LocationRequest.Builder(
+                    Priority.PRIORITY_HIGH_ACCURACY,
+                    updateIntervalSeconds * 1000L
+                )
+                    .setMinUpdateIntervalMillis(10000L)
+                    .build()
 
-        val hasCoarseLocation = ContextCompat.checkSelfPermission(
-            context,
-            android.Manifest.permission.ACCESS_COARSE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
+                fusedLocationClient.requestLocationUpdates(
+                    locationRequest,
+                    fusedLocationCallback,
+                    Looper.getMainLooper()
+                )
+            } catch (e: Exception) {
+                Log.e("LocationTracker", "Error requesting fused updates: ${e.message}")
+            }
 
-        if (hasFineLocation || hasCoarseLocation) {
+            // Register legacy LocationManager as backup
             try {
                 locationManager?.let { lm ->
-                    val isGpsEnabled = lm.isProviderEnabled(LocationManager.GPS_PROVIDER)
-                    val isNetworkEnabled = lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
-
-                    if (isGpsEnabled) {
+                    if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
                         lm.requestLocationUpdates(
                             LocationManager.GPS_PROVIDER,
                             updateIntervalSeconds * 1000L,
-                            10f,
-                            locationListener
+                            5f,
+                            legacyLocationListener,
+                            Looper.getMainLooper()
                         )
-                    } else if (isNetworkEnabled) {
+                    } else if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
                         lm.requestLocationUpdates(
                             LocationManager.NETWORK_PROVIDER,
                             updateIntervalSeconds * 1000L,
-                            10f,
-                            locationListener
+                            5f,
+                            legacyLocationListener,
+                            Looper.getMainLooper()
                         )
                     }
                 }
-            } catch (e: SecurityException) {
-                Log.e("LocationTracker", "Location permission denied: ${e.message}")
+            } catch (e: Exception) {
+                Log.e("LocationTracker", "Error requesting locationManager updates: ${e.message}")
             }
         }
 
-        // Run coroutine periodic updater that sends delivery_partner_update_location to Supabase RPC
+        // Periodic continuous location push to Supabase backend every 15-30 seconds
         trackingJob?.cancel()
         trackingJob = coroutineScope.launch {
             while (isActive && _isTracking.value) {
-                val current = _currentLocation.value
-                // Apply slight micro-step simulation if on emulator to demonstrate real-time GPS movement
-                val nextLat = current.first + (Random.nextDouble(-0.0003, 0.0003))
-                val nextLng = current.second + (Random.nextDouble(-0.0003, 0.0003))
-                updateCoordinates(nextLat, nextLng)
-
-                // Call Supabase RPC
-                repository.updateLocation(nextLat, nextLng)
+                val (lat, lng) = getCurrentGpsLocation()
+                updateCoordinates(lat, lng)
+                Log.i("LocationTracker", "Periodic GPS push: lat=$lat, lng=$lng")
+                repository.updateLocation(lat, lng)
                 delay(updateIntervalSeconds * 1000L)
             }
         }
@@ -103,9 +197,14 @@ class LocationTracker(
         trackingJob?.cancel()
         trackingJob = null
         try {
-            locationManager?.removeUpdates(locationListener)
+            fusedLocationClient.removeLocationUpdates(fusedLocationCallback)
         } catch (e: Exception) {
-            Log.e("LocationTracker", "Error removing updates: ${e.message}")
+            Log.e("LocationTracker", "Error removing fused updates: ${e.message}")
+        }
+        try {
+            locationManager?.removeUpdates(legacyLocationListener)
+        } catch (e: Exception) {
+            Log.e("LocationTracker", "Error removing legacy location updates: ${e.message}")
         }
     }
 
@@ -121,4 +220,17 @@ class LocationTracker(
             repository.updateLocation(next.first, next.second)
         }
     }
+
+    private suspend fun <T> com.google.android.gms.tasks.Task<T>.awaitTask(): T? =
+        suspendCancellableCoroutine { continuation ->
+            addOnSuccessListener { result ->
+                if (continuation.isActive) continuation.resume(result)
+            }
+            addOnFailureListener {
+                if (continuation.isActive) continuation.resume(null)
+            }
+            addOnCanceledListener {
+                if (continuation.isActive) continuation.resume(null)
+            }
+        }
 }

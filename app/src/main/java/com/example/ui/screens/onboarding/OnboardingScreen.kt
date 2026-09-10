@@ -1,5 +1,11 @@
 package com.example.ui.screens.onboarding
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -20,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -28,14 +35,29 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.MainViewModel
 import com.example.ui.theme.*
+import kotlinx.coroutines.launch
+import java.io.ByteArrayOutputStream
+import java.util.Date
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OnboardingScreen(
     viewModel: MainViewModel
 ) {
+    val coroutineScope = rememberCoroutineScope()
+    val context = LocalContext.current
+
     val cities by viewModel.cities.collectAsState()
     var selectedCityId by remember { mutableStateOf("c1111111-1111-1111-1111-111111111111") }
+
+    // Fetch fresh authenticated user UUID from session
+    var authUserId by remember { mutableStateOf<String?>(viewModel.prefs.userId) }
+    LaunchedEffect(Unit) {
+        val realId = viewModel.getFreshAuthUserId()
+        if (!realId.isNullOrBlank()) {
+            authUserId = realId
+        }
+    }
 
     // Update selectedCityId when cities load if default not set
     LaunchedEffect(cities) {
@@ -48,9 +70,217 @@ fun OnboardingScreen(
     var phone by remember { mutableStateOf(viewModel.prefs.userPhone ?: "") }
     var selectedVehicleType by remember { mutableStateOf("bike") } // 'bike' | 'scooter' | 'ev' | 'cycle'
     var vehicleNumber by remember { mutableStateOf("") }
-    var aadharUploaded by remember { mutableStateOf(false) }
-    var licenceUploaded by remember { mutableStateOf(false) }
-    var isSubmitting by remember { mutableStateOf(false) }
+
+    // Saved relative storage paths under auth.uid() folder
+    var aadharPath by remember { mutableStateOf<String?>(null) }
+    var licencePath by remember { mutableStateOf<String?>(null) }
+    var isUploadingAadhar by remember { mutableStateOf(false) }
+    var isUploadingLicence by remember { mutableStateOf(false) }
+
+    var showAadharDialog by remember { mutableStateOf(false) }
+    var showLicenceDialog by remember { mutableStateOf(false) }
+
+    val isActionLoading by viewModel.isActionLoading.collectAsState()
+
+    // Helper to generate sample KYC document bytes for test / verification
+    fun generateSampleDocBytes(docName: String): ByteArray {
+        val bitmap = Bitmap.createBitmap(720, 460, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(android.graphics.Color.WHITE)
+        val paint = Paint().apply {
+            isAntiAlias = true
+            color = android.graphics.Color.parseColor("#064E3B")
+            textSize = 28f
+        }
+        canvas.drawText("SNDMART PARTNER KYC VERIFICATION", 36f, 70f, paint)
+        paint.color = android.graphics.Color.parseColor("#059669")
+        paint.textSize = 24f
+        canvas.drawText("DOCUMENT: $docName", 36f, 130f, paint)
+        paint.color = android.graphics.Color.DKGRAY
+        paint.textSize = 18f
+        canvas.drawText("User ID: ${authUserId ?: "auth.uid()"}", 36f, 190f, paint)
+        canvas.drawText("Timestamp: ${Date()}", 36f, 230f, paint)
+        paint.color = android.graphics.Color.GRAY
+        paint.textSize = 16f
+        canvas.drawText("Storage: delivery-partner-kyc-documents", 36f, 280f, paint)
+        val output = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output)
+        return output.toByteArray()
+    }
+
+    // Android Photo Picker for Aadhaar Card
+    val aadharPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            coroutineScope.launch {
+                isUploadingAadhar = true
+                try {
+                    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    if (bytes != null && bytes.isNotEmpty()) {
+                        val result = viewModel.uploadKycDocument("aadhar", bytes)
+                        result.onSuccess { path ->
+                            aadharPath = path
+                            viewModel.showMessage("Aadhaar Card uploaded successfully!")
+                        }.onFailure { err ->
+                            viewModel.showMessage("KYC upload error: ${err.message}")
+                        }
+                    } else {
+                        viewModel.showMessage("Failed to read image file from device")
+                    }
+                } catch (e: Exception) {
+                    viewModel.showMessage("KYC upload error: ${e.message}")
+                } finally {
+                    isUploadingAadhar = false
+                }
+            }
+        }
+    }
+
+    // Android Photo Picker for Driving Licence
+    val licencePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            coroutineScope.launch {
+                isUploadingLicence = true
+                try {
+                    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    if (bytes != null && bytes.isNotEmpty()) {
+                        val result = viewModel.uploadKycDocument("license", bytes)
+                        result.onSuccess { path ->
+                            licencePath = path
+                            viewModel.showMessage("Driving Licence uploaded successfully!")
+                        }.onFailure { err ->
+                            viewModel.showMessage("KYC upload error: ${err.message}")
+                        }
+                    } else {
+                        viewModel.showMessage("Failed to read image file from device")
+                    }
+                } catch (e: Exception) {
+                    viewModel.showMessage("KYC upload error: ${e.message}")
+                } finally {
+                    isUploadingLicence = false
+                }
+            }
+        }
+    }
+
+    if (showAadharDialog) {
+        AlertDialog(
+            onDismissRequest = { showAadharDialog = false },
+            title = { Text("Upload Aadhaar Card Photo") },
+            text = {
+                Column {
+                    Text("Select how you would like to provide your Aadhaar Card photo:")
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "Destination: delivery-partner-kyc-documents/${authUserId ?: "auth.uid()"}/",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showAadharDialog = false
+                        aadharPicker.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    }
+                ) {
+                    Icon(Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Select from Photos")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = {
+                        showAadharDialog = false
+                        coroutineScope.launch {
+                            isUploadingAadhar = true
+                            try {
+                                val bytes = generateSampleDocBytes("Aadhaar Card Photo")
+                                val result = viewModel.uploadKycDocument("aadhar", bytes)
+                                result.onSuccess { path ->
+                                    aadharPath = path
+                                    viewModel.showMessage("Aadhaar Card uploaded to storage!")
+                                }.onFailure { err ->
+                                    viewModel.showMessage("KYC upload error: ${err.message}")
+                                }
+                            } catch (e: Exception) {
+                                viewModel.showMessage("KYC upload error: ${e.message}")
+                            } finally {
+                                isUploadingAadhar = false
+                            }
+                        }
+                    }
+                ) {
+                    Text("Use Sample Photo")
+                }
+            }
+        )
+    }
+
+    if (showLicenceDialog) {
+        AlertDialog(
+            onDismissRequest = { showLicenceDialog = false },
+            title = { Text("Upload Driving Licence") },
+            text = {
+                Column {
+                    Text("Select how you would like to provide your Driving Licence photo:")
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "Destination: delivery-partner-kyc-documents/${authUserId ?: "auth.uid()"}/",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showLicenceDialog = false
+                        licencePicker.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    }
+                ) {
+                    Icon(Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Select from Photos")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = {
+                        showLicenceDialog = false
+                        coroutineScope.launch {
+                            isUploadingLicence = true
+                            try {
+                                val bytes = generateSampleDocBytes("Driving Licence DL")
+                                val result = viewModel.uploadKycDocument("license", bytes)
+                                result.onSuccess { path ->
+                                    licencePath = path
+                                    viewModel.showMessage("Driving Licence uploaded to storage!")
+                                }.onFailure { err ->
+                                    viewModel.showMessage("KYC upload error: ${err.message}")
+                                }
+                            } catch (e: Exception) {
+                                viewModel.showMessage("KYC upload error: ${e.message}")
+                            } finally {
+                                isUploadingLicence = false
+                            }
+                        }
+                    }
+                ) {
+                    Text("Use Sample Photo")
+                }
+            }
+        )
+    }
 
     val vehicleOptions = listOf(
         Pair("bike", "Motorcycle (Bike)"),
@@ -273,7 +503,7 @@ fun OnboardingScreen(
 
             // KYC Documents Upload Section
             Text(
-                text = "3. KYC Document Verification (Storage: delivery-partner-kyc-documents)",
+                text = "3. KYC Document Verification (Private Bucket: delivery-partner-kyc-documents)",
                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                 color = MaterialTheme.colorScheme.primary
             )
@@ -281,24 +511,22 @@ fun OnboardingScreen(
 
             DocumentUploadCard(
                 title = "Aadhaar Card Photo (Front)",
-                subtitle = "Saved to delivery-partner-kyc-documents/\${user_id}/aadhar.jpg",
-                isUploaded = aadharUploaded,
-                onUploadClick = {
-                    aadharUploaded = true
-                    viewModel.showMessage("Aadhaar photo attached")
-                }
+                targetBucket = "delivery-partner-kyc-documents",
+                authUserId = authUserId,
+                savedPath = aadharPath,
+                isUploading = isUploadingAadhar,
+                onUploadClick = { showAadharDialog = true }
             )
 
             Spacer(modifier = Modifier.height(12.dp))
 
             DocumentUploadCard(
                 title = "Driving Licence (DL)",
-                subtitle = "Saved to delivery-partner-kyc-documents/\${user_id}/license.jpg",
-                isUploaded = licenceUploaded,
-                onUploadClick = {
-                    licenceUploaded = true
-                    viewModel.showMessage("Driving Licence photo attached")
-                }
+                targetBucket = "delivery-partner-kyc-documents",
+                authUserId = authUserId,
+                savedPath = licencePath,
+                isUploading = isUploadingLicence,
+                onUploadClick = { showLicenceDialog = true }
             )
 
             Spacer(modifier = Modifier.height(32.dp))
@@ -317,24 +545,21 @@ fun OnboardingScreen(
                         viewModel.showMessage("Please enter your vehicle registration number")
                         return@Button
                     }
-                    if (!aadharUploaded || !licenceUploaded) {
-                        viewModel.showMessage("Mandatory: Please attach both Aadhaar and Driving Licence photos")
+                    if (aadharPath == null || licencePath == null) {
+                        viewModel.showMessage("Mandatory: Please upload both Aadhaar and Driving Licence photos")
                         return@Button
                     }
-                    isSubmitting = true
-                    val userId = viewModel.prefs.userId ?: "user_rider"
-                    val aadharUrl = "${viewModel.prefs.customSupabaseUrl.removeSuffix("/")}/storage/v1/object/public/delivery-partner-kyc-documents/$userId/aadhar.jpg"
-                    val dlUrl = "${viewModel.prefs.customSupabaseUrl.removeSuffix("/")}/storage/v1/object/public/delivery-partner-kyc-documents/$userId/license.jpg"
                     viewModel.submitOnboarding(
                         name = fullName,
                         phone = phone,
                         vehicleType = selectedVehicleType,
                         vehicleNumber = vehicleNumber,
                         cityId = selectedCityId,
-                        aadharUrl = aadharUrl,
-                        licenceUrl = dlUrl
+                        aadharUrl = aadharPath,
+                        licenceUrl = licencePath
                     )
                 },
+                enabled = !isActionLoading,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp)
@@ -342,7 +567,7 @@ fun OnboardingScreen(
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
             ) {
-                if (isSubmitting) {
+                if (isActionLoading) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(22.dp),
                         color = Color.White,
@@ -363,14 +588,17 @@ fun OnboardingScreen(
 @Composable
 fun DocumentUploadCard(
     title: String,
-    subtitle: String,
-    isUploaded: Boolean,
+    targetBucket: String = "delivery-partner-kyc-documents",
+    authUserId: String?,
+    savedPath: String?,
+    isUploading: Boolean,
     onUploadClick: () -> Unit
 ) {
+    val isUploaded = !savedPath.isNullOrBlank()
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onUploadClick() },
+            .clickable(enabled = !isUploading) { onUploadClick() },
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (isUploaded) EmeraldContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surface
@@ -397,12 +625,20 @@ fun DocumentUploadCard(
                         .background(if (isUploaded) EmeraldPrimary else MaterialTheme.colorScheme.surfaceVariant),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = if (isUploaded) Icons.Default.Check else Icons.Default.CameraAlt,
-                        contentDescription = null,
-                        tint = if (isUploaded) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp)
-                    )
+                    if (isUploading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = if (isUploaded) Icons.Default.Check else Icons.Default.CameraAlt,
+                            contentDescription = null,
+                            tint = if (isUploaded) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
                 Spacer(modifier = Modifier.width(12.dp))
                 Column {
@@ -410,20 +646,39 @@ fun DocumentUploadCard(
                         text = title,
                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
                     )
-                    Text(
-                        text = if (isUploaded) "Document attached ✓ Ready" else subtitle,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (isUploaded) EmeraldOnContainer else MaterialTheme.colorScheme.outline
-                    )
+                    if (isUploading) {
+                        Text(
+                            text = "Uploading to $targetBucket...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    } else if (isUploaded) {
+                        Text(
+                            text = "Saved to: $targetBucket/$savedPath ✓",
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                            color = EmeraldOnContainer
+                        )
+                    } else {
+                        val folderName = authUserId ?: "auth.uid()"
+                        Text(
+                            text = "Uploads to: $targetBucket/$folderName/",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline
+                        )
+                    }
                 }
             }
 
             OutlinedButton(
                 onClick = onUploadClick,
+                enabled = !isUploading,
                 shape = RoundedCornerShape(10.dp),
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
             ) {
-                Text(if (isUploaded) "Change" else "Upload", fontSize = 12.sp)
+                Text(
+                    text = if (isUploading) "..." else if (isUploaded) "Replace" else "Upload",
+                    fontSize = 12.sp
+                )
             }
         }
     }

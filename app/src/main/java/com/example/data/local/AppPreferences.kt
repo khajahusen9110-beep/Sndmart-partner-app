@@ -57,6 +57,25 @@ class AppPreferences(context: Context) {
             _authToken.value = value
         }
 
+    var refreshToken: String?
+        get() = prefs.getString(KEY_REFRESH_TOKEN, null)
+        set(value) {
+            prefs.edit().putString(KEY_REFRESH_TOKEN, value).apply()
+        }
+
+    var tokenExpiresAt: Long
+        get() = prefs.getLong(KEY_TOKEN_EXPIRES_AT, 0L)
+        set(value) {
+            prefs.edit().putLong(KEY_TOKEN_EXPIRES_AT, value).apply()
+        }
+
+    fun isSessionExpiringSoon(): Boolean {
+        val exp = tokenExpiresAt
+        if (exp <= 0L) return false
+        // Consider expired if within 2 minutes of expiry or already past
+        return System.currentTimeMillis() >= (exp - 120_000L)
+    }
+
     var userId: String?
         get() = prefs.getString(KEY_USER_ID, null)
         set(value) = prefs.edit().putString(KEY_USER_ID, value).apply()
@@ -98,7 +117,14 @@ class AppPreferences(context: Context) {
         }
 
     var fcmDeviceToken: String
-        get() = prefs.getString(KEY_FCM_DEVICE_TOKEN, "fcm_sndmart_partner_${System.currentTimeMillis()}") ?: ""
+        get() {
+            var token = prefs.getString(KEY_FCM_DEVICE_TOKEN, null)
+            if (token.isNullOrEmpty()) {
+                token = "fcm_sndmart_partner_${java.util.UUID.randomUUID().toString().replace("-", "").take(20)}"
+                prefs.edit().putString(KEY_FCM_DEVICE_TOKEN, token).apply()
+            }
+            return token
+        }
         set(value) = prefs.edit().putString(KEY_FCM_DEVICE_TOKEN, value).apply()
 
     var isFcmRegistered: Boolean
@@ -116,6 +142,8 @@ class AppPreferences(context: Context) {
     fun clearSession() {
         prefs.edit()
             .remove(KEY_AUTH_TOKEN)
+            .remove(KEY_REFRESH_TOKEN)
+            .remove(KEY_TOKEN_EXPIRES_AT)
             .remove(KEY_USER_ID)
             .remove(KEY_USER_EMAIL)
             .remove(KEY_USER_PHONE)
@@ -134,6 +162,8 @@ class AppPreferences(context: Context) {
         const val DEFAULT_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inplbm5tb3VnaGZoZW5ud2dlY2dvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcwNjI3MjksImV4cCI6MjEwMjYzODcyOX0.xSuD8sYQ4PWgN-YhOaHhwg6hdZYjw2_Jj-XrK3lMERc"
 
         private const val KEY_AUTH_TOKEN = "auth_token"
+        private const val KEY_REFRESH_TOKEN = "refresh_token"
+        private const val KEY_TOKEN_EXPIRES_AT = "token_expires_at"
         private const val KEY_USER_ID = "user_id"
         private const val KEY_USER_EMAIL = "user_email"
         private const val KEY_USER_PHONE = "user_phone"
