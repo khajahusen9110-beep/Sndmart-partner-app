@@ -82,6 +82,17 @@ data class PickupInfo(
 )
 
 @JsonClass(generateAdapter = true)
+data class OrderItem(
+    val id: String? = null,
+    @Json(name = "order_id") val orderId: String? = null,
+    @Json(name = "product_name") val productName: String = "",
+    @Json(name = "variant_label") val variantLabel: String? = null,
+    val quantity: Int = 1,
+    @Json(name = "unit_price") val unitPrice: Double = 0.0,
+    @Json(name = "total_price") val totalPrice: Double = 0.0
+)
+
+@JsonClass(generateAdapter = true)
 data class OrderItemInfo(
     @Json(name = "product_name") val productName: String = "",
     val variant: String? = null,
@@ -94,41 +105,92 @@ data class OrderItemInfo(
 @JsonClass(generateAdapter = true)
 data class DeliveryAssignment(
     val id: String,
-    @Json(name = "order_id") val orderId: String,
+    @Json(name = "order_id") val orderId: String = "",
     @Json(name = "delivery_partner_id") val deliveryPartnerId: String? = null,
     val status: String = "assigned", // assigned, accepted, arrived_pickup, picked_up, out_for_delivery, arrived_drop, delivered, rejected, cancelled
-    @Json(name = "order_number") val orderNumber: String = "",
-    @Json(name = "store_name") val storeName: String = "Sndmart Hub",
-    @Json(name = "store_address") val storeAddress: String = "",
-    @Json(name = "store_phone") val storePhone: String = "",
-    @Json(name = "store_lat") val storeLat: Double = 12.9716,
-    @Json(name = "store_lng") val storeLng: Double = 77.5946,
-    @Json(name = "customer_name") val customerName: String = "",
-    @Json(name = "customer_address") val customerAddress: String = "",
-    @Json(name = "customer_phone") val customerPhone: String = "",
-    @Json(name = "customer_lat") val customerLat: Double = 12.9816,
-    @Json(name = "customer_lng") val customerLng: Double = 77.6046,
-    @Json(name = "items_summary") val itemsSummary: String = "",
-    @Json(name = "item_count") val itemCount: Int = 1,
-    @Json(name = "total_amount") val totalAmount: Double = 0.0,
-    @Json(name = "payment_mode") val paymentMode: String = "PREPAID", // COD or PREPAID
-    @Json(name = "delivery_fee") val deliveryFee: Double = 45.0,
-    @Json(name = "estimated_pickup_distance_km") val estimatedPickupDistanceKm: Double = 1.2,
-    @Json(name = "estimated_drop_distance_km") val estimatedDropDistanceKm: Double = 3.5,
+    val orderNumber: String = "",
+    val storeName: String = "Sndmart Hub",
+    val storeAddress: String = "",
+    val storePhone: String = "",
+    val storeLat: Double = 15.8061517,
+    val storeLng: Double = 76.7650682,
+    val customerName: String = "",
+    val customerAddress: String = "",
+    val customerPhone: String = "",
+    val customerLat: Double = 15.8080,
+    val customerLng: Double = 76.7680,
+    val itemsSummary: String = "",
+    val itemCount: Int = 1,
+    val totalAmount: Double = 0.0,
+    val paymentMode: String = "PREPAID", // COD or PREPAID
+    val deliveryFee: Double = 45.0,
+    val estimatedPickupDistanceKm: Double = 1.2,
+    val estimatedDropDistanceKm: Double = 3.5,
     @Json(name = "pickup_photo_url") val pickupPhotoUrl: String? = null,
     @Json(name = "delivered_photo_url") val deliveredPhotoUrl: String? = null,
     @Json(name = "batch_id") val batchId: String? = null,
-    @Json(name = "batch_code") val batchCode: String? = null,
+    val batchCode: String? = null,
     @Json(name = "assigned_at") val assignedAt: String? = null,
     @Json(name = "accepted_at") val acceptedAt: String? = null,
     @Json(name = "picked_up_at") val pickedUpAt: String? = null,
     @Json(name = "delivered_at") val deliveredAt: String? = null,
     @Json(name = "expires_at") val expiresAt: String? = null,
     @Json(name = "estimated_delivery_minutes") val estimatedDeliveryMinutes: Int? = null,
+    @Json(name = "estimated_delivery_at") val estimatedDeliveryAt: String? = null,
     @Json(name = "delivery_otp") val deliveryOtp: String? = null,
     @Json(name = "created_at") val createdAt: String = "",
-    @Json(name = "expires_in_seconds") val expiresInSeconds: Int = 60,
-    val details: DeliveryAssignmentDetails? = null
+    val expiresInSeconds: Int = 60,
+    val details: DeliveryAssignmentDetails? = null,
+    val orders: OrderDbModel? = null,
+    val orderItems: List<OrderItem> = emptyList()
+)
+
+@JsonClass(generateAdapter = true)
+data class OrderDbModel(
+    val id: String,
+    @Json(name = "order_number") val orderNumber: String? = null,
+    @Json(name = "vendor_id") val vendorId: String? = null,
+    @Json(name = "address_id") val addressId: String? = null,
+    @Json(name = "city_id") val cityId: String? = null,
+    @Json(name = "total_amount") val totalAmount: Double? = null,
+    @Json(name = "delivery_fee") val deliveryFee: Double? = null,
+    @Json(name = "payment_method") val paymentMethod: String? = null,
+    val vendors: VendorDbModel? = null,
+    @Json(name = "customer_addresses") val customerAddresses: CustomerAddressDbModel? = null,
+    val cities: CityDbModel? = null,
+    @Json(name = "order_items") val orderItems: List<OrderItem>? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class VendorDbModel(
+    val id: String,
+    val name: String? = null,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val address: String? = null,
+    val phone: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class CustomerAddressDbModel(
+    val id: String,
+    @Json(name = "user_id") val userId: String? = null,
+    val lat: Double? = null,
+    val lng: Double? = null,
+    @Json(name = "recipient_name") val recipientName: String? = null,
+    val phone: String? = null,
+    @Json(name = "address_line") val addressLine: String? = null,
+    val landmark: String? = null,
+    val city: String? = null,
+    val pincode: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class CityDbModel(
+    val id: String,
+    val name: String? = null,
+    @Json(name = "center_lat") val centerLat: Double? = null,
+    @Json(name = "center_lng") val centerLng: Double? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -152,7 +214,13 @@ data class DeliveryEarning(
     val penalty: Double = 0.0,
     @Json(name = "net_earning") val netEarning: Double = 0.0,
     val status: String = "approved", // pending, approved, paid
+    @Json(name = "paid_at") val paidAt: String? = null,
     @Json(name = "created_at") val createdAt: String = ""
+)
+
+@JsonClass(generateAdapter = true)
+data class CashLedgerOrderModel(
+    @Json(name = "order_number") val orderNumber: String? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -163,9 +231,11 @@ data class CashLedgerEntry(
     val amount: Double,
     @Json(name = "order_id") val orderId: String? = null,
     @Json(name = "order_number") val orderNumber: String? = null,
+    val note: String? = null,
     val notes: String? = null,
     val status: String = "completed", // "pending", "completed" (for remittance requests)
-    @Json(name = "created_at") val createdAt: String = ""
+    @Json(name = "created_at") val createdAt: String = "",
+    val orders: CashLedgerOrderModel? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -188,10 +258,19 @@ data class PaymentRequest(
     @Json(name = "delivery_partner_id") val deliveryPartnerId: String = "",
     val amount: Double,
     val status: String = "pending", // pending, processed, rejected
+    val note: String? = null,
+    @Json(name = "created_at") val createdAt: String = "",
+    @Json(name = "updated_at") val updatedAt: String? = null,
+    @Json(name = "paid_at") val paidAt: String? = null,
     @Json(name = "payout_method") val payoutMethod: String = "bank",
     @Json(name = "account_summary") val accountSummary: String = "",
     @Json(name = "requested_at") val requestedAt: String = "",
     @Json(name = "processed_at") val processedAt: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class ProfileCustomer(
+    @Json(name = "full_name") val fullName: String? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -204,15 +283,20 @@ data class DeliveryPartnerReview(
     val comment: String? = null,
     val review: String? = null,
     @Json(name = "customer_name") val customerName: String? = null,
-    @Json(name = "created_at") val createdAt: String? = null
-)
+    @Json(name = "created_at") val createdAt: String? = null,
+    val profiles: ProfileCustomer? = null
+) {
+    val reviewerName: String
+        get() = profiles?.fullName ?: customerName ?: "Verified Customer"
+}
 
 @JsonClass(generateAdapter = true)
 data class InAppNotification(
     val id: String,
     @Json(name = "user_id") val userId: String = "",
-    val title: String,
-    val message: String,
+    val title: String = "",
+    val body: String? = null,
+    val message: String = "",
     val type: String = "info",
     @Json(name = "is_read") val isRead: Boolean = false,
     @Json(name = "created_at") val createdAt: String = ""
@@ -279,3 +363,25 @@ data class RequestCashRemittanceRpcParams(
 data class GetCashBalanceRpcParams(
     val p_delivery_partner_id: String
 )
+
+@JsonClass(generateAdapter = true)
+data class AppVersionInfo(
+    val platform: String = "delivery_partner_app",
+    @Json(name = "minimum_supported_version") val minimumSupportedVersion: String? = null,
+    @Json(name = "latest_version") val latestVersion: String? = null,
+    @Json(name = "force_update") val forceUpdate: Boolean = false,
+    @Json(name = "update_message") val updateMessage: String? = null,
+    @Json(name = "download_url") val downloadUrl: String? = null
+)
+
+data class MaintenanceModeSetting(
+    val enabled: Boolean = false,
+    val message: String? = null
+)
+
+sealed class UploadState {
+    object Idle : UploadState()
+    object Uploading : UploadState()
+    data class Success(val path: String) : UploadState()
+    data class Error(val message: String) : UploadState()
+}

@@ -24,6 +24,9 @@ class AppPreferences(context: Context) {
     private val _userEmail = MutableStateFlow(prefs.getString(KEY_USER_EMAIL, null))
     val userEmailFlow: StateFlow<String?> = _userEmail.asStateFlow()
 
+    private val _userPhone = MutableStateFlow(prefs.getString(KEY_USER_PHONE, null))
+    val userPhoneFlow: StateFlow<String?> = _userPhone.asStateFlow()
+
     private val _supabaseUrl = MutableStateFlow(prefs.getString(KEY_SUPABASE_URL, DEFAULT_SUPABASE_URL) ?: DEFAULT_SUPABASE_URL)
     val supabaseUrl: StateFlow<String> = _supabaseUrl.asStateFlow()
 
@@ -89,7 +92,10 @@ class AppPreferences(context: Context) {
 
     var userPhone: String?
         get() = prefs.getString(KEY_USER_PHONE, null)
-        set(value) = prefs.edit().putString(KEY_USER_PHONE, value).apply()
+        set(value) {
+            prefs.edit().putString(KEY_USER_PHONE, value).apply()
+            _userPhone.value = value
+        }
 
     var currentPartnerId: String?
         get() = prefs.getString(KEY_PARTNER_ID, null)
@@ -97,6 +103,18 @@ class AppPreferences(context: Context) {
             prefs.edit().putString(KEY_PARTNER_ID, value).apply()
             _partnerId.value = value
         }
+
+    var partnerName: String
+        get() = prefs.getString(KEY_PARTNER_NAME, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_PARTNER_NAME, value).apply()
+
+    var partnerVehicleType: String
+        get() = prefs.getString(KEY_PARTNER_VEHICLE_TYPE, "bike") ?: "bike"
+        set(value) = prefs.edit().putString(KEY_PARTNER_VEHICLE_TYPE, value).apply()
+
+    var partnerVehicleNumber: String
+        get() = prefs.getString(KEY_PARTNER_VEHICLE_NUMBER, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_PARTNER_VEHICLE_NUMBER, value).apply()
 
     var approvalStatus: String
         get() = prefs.getString(KEY_APPROVAL_STATUS, "pending") ?: "pending"
@@ -139,6 +157,28 @@ class AppPreferences(context: Context) {
         get() = prefs.getBoolean(KEY_EMAIL_CONFIRMED, false)
         set(value) = prefs.edit().putBoolean(KEY_EMAIL_CONFIRMED, value).apply()
 
+    fun getHandledAssignmentIds(): Set<String> {
+        return prefs.getStringSet(KEY_HANDLED_ASSIGNMENTS, emptySet()) ?: emptySet()
+    }
+
+    fun addHandledAssignmentId(id: String) {
+        if (id.isBlank()) return
+        val current = prefs.getStringSet(KEY_HANDLED_ASSIGNMENTS, emptySet())?.toMutableSet() ?: mutableSetOf()
+        current.add(id)
+        // Keep set size reasonable (last 100 handled IDs)
+        if (current.size > 100) {
+            val trimmed = current.toList().takeLast(100).toSet()
+            prefs.edit().putStringSet(KEY_HANDLED_ASSIGNMENTS, trimmed).apply()
+        } else {
+            prefs.edit().putStringSet(KEY_HANDLED_ASSIGNMENTS, current).apply()
+        }
+    }
+
+    fun isAssignmentHandled(id: String): Boolean {
+        if (id.isBlank()) return false
+        return prefs.getStringSet(KEY_HANDLED_ASSIGNMENTS, emptySet())?.contains(id) == true
+    }
+
     fun clearSession() {
         prefs.edit()
             .remove(KEY_AUTH_TOKEN)
@@ -148,6 +188,9 @@ class AppPreferences(context: Context) {
             .remove(KEY_USER_EMAIL)
             .remove(KEY_USER_PHONE)
             .remove(KEY_PARTNER_ID)
+            .remove(KEY_PARTNER_NAME)
+            .remove(KEY_PARTNER_VEHICLE_TYPE)
+            .remove(KEY_PARTNER_VEHICLE_NUMBER)
             .remove(KEY_APPROVAL_STATUS)
             .putBoolean(KEY_IS_ONLINE, false)
             .apply()
@@ -168,6 +211,9 @@ class AppPreferences(context: Context) {
         private const val KEY_USER_EMAIL = "user_email"
         private const val KEY_USER_PHONE = "user_phone"
         private const val KEY_PARTNER_ID = "partner_id"
+        private const val KEY_PARTNER_NAME = "partner_name"
+        private const val KEY_PARTNER_VEHICLE_TYPE = "partner_vehicle_type"
+        private const val KEY_PARTNER_VEHICLE_NUMBER = "partner_vehicle_number"
         private const val KEY_APPROVAL_STATUS = "approval_status"
         private const val KEY_IS_ONLINE = "is_online"
         private const val KEY_IS_AVAILABLE = "is_available"
@@ -177,5 +223,6 @@ class AppPreferences(context: Context) {
         private const val KEY_FCM_REGISTERED = "fcm_registered"
         private const val KEY_SOUND_ALERTS = "sound_alerts"
         private const val KEY_EMAIL_CONFIRMED = "email_confirmed"
+        private const val KEY_HANDLED_ASSIGNMENTS = "handled_assignments"
     }
 }

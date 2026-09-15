@@ -163,6 +163,23 @@ fun ReviewStatusScreen(
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("CHECK STATUS", fontWeight = FontWeight.Bold)
                 }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                OutlinedButton(
+                    onClick = {
+                        viewModel.retryOnboarding()
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("edit_kyc_application_button"),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.Edit, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("EDIT / RE-SUBMIT APPLICATION", fontWeight = FontWeight.SemiBold)
+                }
             } else {
                 // Rejected State
                 Box(

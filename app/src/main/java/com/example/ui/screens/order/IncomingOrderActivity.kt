@@ -3,10 +3,16 @@ package com.example.ui.screens.order
 import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
 import android.media.Ringtone
 import android.media.RingtoneManager
 import android.os.Build
 import android.os.Bundle
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
+import android.provider.Settings
+import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -33,16 +39,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.widget.Toast
 import com.example.MainActivity
 import com.example.data.local.AppDatabase
 import com.example.data.local.AppPreferences
+import com.example.data.model.DeliveryAssignment
 import com.example.data.remote.SupabaseRepository
 import com.example.ui.theme.*
 import kotlinx.coroutines.*
+import java.time.Instant
 
 class IncomingOrderActivity : ComponentActivity() {
 
     private var ringtone: Ringtone? = null
+    private var vibrator: Vibrator? = null
     private var activityScope = CoroutineScope(Dispatchers.Main + Job())
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -63,30 +73,56 @@ class IncomingOrderActivity : ComponentActivity() {
                         WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
             )
         }
+        window.addFlags(
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                    WindowManager.LayoutParams.FLAG_ALLOW_LOCK_WHILE_SCREEN_ON
+        )
 
-        val assignmentId = intent.getStringExtra(EXTRA_ASSIGNMENT_ID) ?: ""
-        val orderId = intent.getStringExtra(EXTRA_ORDER_ID) ?: ""
+        val orderId = intent.getStringExtra("order_id")
+            ?: intent.getStringExtra("orderId")
+            ?: intent.getStringExtra(EXTRA_ORDER_ID)
+            ?: ""
+        val assignmentId = intent.getStringExtra(EXTRA_ASSIGNMENT_ID)
+            ?: intent.getStringExtra("assignment_id")
+            ?: intent.getStringExtra("assignmentId")
+            ?: orderId
+
         val storeName = intent.getStringExtra(EXTRA_STORE_NAME) ?: "Sndmart DarkStore - Koramangala"
         val storeAddress = intent.getStringExtra(EXTRA_STORE_ADDRESS) ?: "100 Feet Rd, Indiranagar, Bengaluru"
         val customerAddress = intent.getStringExtra(EXTRA_CUSTOMER_ADDRESS) ?: "#42, 3rd Cross, Indiranagar, Bengaluru"
         val paymentMode = intent.getStringExtra(EXTRA_PAYMENT_MODE) ?: "PREPAID"
         val totalAmount = intent.getDoubleExtra(EXTRA_TOTAL_AMOUNT, 450.0)
         val deliveryFee = intent.getDoubleExtra(EXTRA_DELIVERY_FEE, 55.0)
+        val pickupDistance = intent.getStringExtra("pickup_distance") ?: "0.8 km away"
+        val dropDistance = intent.getStringExtra("drop_distance") ?: "2.4 km trip"
+        val expiresAtIso = intent.getStringExtra("expires_at") ?: ""
 
         val prefs = AppPreferences(applicationContext)
         val database = AppDatabase.getInstance(applicationContext)
         val repository = SupabaseRepository(applicationContext, prefs, database)
 
-        // Play loud ringtone alert if enabled
-        if (prefs.soundAlertsEnabled) {
+        if (assignmentId.isNotBlank() && (prefs.isAssignmentHandled(assignmentId) || repository.isAssignmentHandled(assignmentId))) {
+            Log.d("IncomingOrderActivity", "Assignment $assignmentId already handled. Dismissing.")
+            finish()
+            return
+        }
+
+        // Calculate countdown based on delivery_assignments.expires_at (55-60s per specification)
+        var initialCountdown = 60
+        if (expiresAtIso.isNotBlank() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             try {
-                val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-                ringtone = RingtoneManager.getRingtone(applicationContext, ringtoneUri)
-                ringtone?.play()
+                val expiryTime = Instant.parse(expiresAtIso).toEpochMilli()
+                val diffSeconds = ((expiryTime - System.currentTimeMillis()) / 1000).toInt()
+                if (diffSeconds in 5..120) {
+                    initialCountdown = diffSeconds.coerceIn(5, 60)
+                }
             } catch (e: Exception) {
-                // Ringtone fallback
+                Log.w("IncomingOrderActivity", "Could not parse expires_at: ${e.message}")
             }
         }
+
+        // Start loud ringtone + vibration alert
+        startAlertSoundAndVibration(prefs)
 
         setContent {
             MyApplicationTheme {
@@ -98,21 +134,45 @@ class IncomingOrderActivity : ComponentActivity() {
                     paymentMode = paymentMode,
                     totalAmount = totalAmount,
                     deliveryFee = deliveryFee,
+                    pickupDistance = pickupDistance,
+                    dropDistance = dropDistance,
+                    initialCountdown = initialCountdown,
                     onAccept = {
-                        stopAlertSound()
+                        stopAlertSoundAndVibration()
                         activityScope.launch {
-                            repository.respondToAssignment(assignmentId, true)
-                            val mainIntent = Intent(this@IncomingOrderActivity, MainActivity::class.java).apply {
-                                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                            val targetId = assignmentId.ifBlank { orderId }
+                            val snapshot = DeliveryAssignment(
+                                id = targetId,
+                                orderId = orderId,
+                                storeName = storeName,
+                                storeAddress = storeAddress,
+                                customerAddress = customerAddress,
+                                paymentMode = paymentMode,
+                                totalAmount = totalAmount,
+                                deliveryFee = deliveryFee
+                            )
+                            val res = repository.respondToAssignment(targetId, true, snapshot)
+                            if (res.isSuccess) {
+                                val mainIntent = Intent(this@IncomingOrderActivity, MainActivity::class.java).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                                    putExtra("EXTRA_NAVIGATE_ASSIGNMENT_ID", targetId)
+                                }
+                                startActivity(mainIntent)
+                                finish()
+                            } else {
+                                Toast.makeText(
+                                    this@IncomingOrderActivity,
+                                    "Accept order error: ${res.exceptionOrNull()?.message ?: "Failed to accept order"}",
+                                    Toast.LENGTH_LONG
+                                ).show()
                             }
-                            startActivity(mainIntent)
-                            finish()
                         }
                     },
                     onReject = {
-                        stopAlertSound()
+                        stopAlertSoundAndVibration()
                         activityScope.launch {
-                            repository.respondToAssignment(assignmentId, false)
+                            val targetId = assignmentId.ifBlank { orderId }
+                            repository.respondToAssignment(targetId, false)
                             finish()
                         }
                     }
@@ -121,17 +181,58 @@ class IncomingOrderActivity : ComponentActivity() {
         }
     }
 
-    private fun stopAlertSound() {
+    private fun startAlertSoundAndVibration(prefs: AppPreferences) {
+        if (prefs.soundAlertsEnabled) {
+            try {
+                val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+                    ?: Settings.System.DEFAULT_RINGTONE_URI
+                ringtone = RingtoneManager.getRingtone(applicationContext, ringtoneUri)?.apply {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                        audioAttributes = AudioAttributes.Builder()
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                            .build()
+                    }
+                    play()
+                }
+            } catch (e: Exception) {
+                Log.w("IncomingOrderActivity", "Ringtone error: ${e.message}")
+            }
+        }
+
+        try {
+            vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+                vibratorManager?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            }
+
+            val pattern = longArrayOf(0, 800, 400, 800, 400, 800)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator?.vibrate(VibrationEffect.createWaveform(pattern, 0))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator?.vibrate(pattern, 0)
+            }
+        } catch (e: Exception) {
+            Log.w("IncomingOrderActivity", "Vibrator error: ${e.message}")
+        }
+    }
+
+    private fun stopAlertSoundAndVibration() {
         try {
             ringtone?.stop()
-        } catch (e: Exception) {
-            // ignore
-        }
+        } catch (ignored: Exception) {}
+        try {
+            vibrator?.cancel()
+        } catch (ignored: Exception) {}
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        stopAlertSound()
+        stopAlertSoundAndVibration()
         activityScope.cancel()
     }
 
@@ -146,6 +247,7 @@ class IncomingOrderActivity : ComponentActivity() {
         const val EXTRA_PAYMENT_MODE = "extra_payment_mode"
         const val EXTRA_TOTAL_AMOUNT = "extra_total_amount"
         const val EXTRA_DELIVERY_FEE = "extra_delivery_fee"
+        const val EXTRA_EXPIRES_AT = "extra_expires_at"
     }
 }
 
@@ -158,10 +260,13 @@ fun IncomingOrderScreen(
     paymentMode: String,
     totalAmount: Double,
     deliveryFee: Double,
+    pickupDistance: String,
+    dropDistance: String,
+    initialCountdown: Int = 60,
     onAccept: () -> Unit,
     onReject: () -> Unit
 ) {
-    var secondsLeft by remember { mutableIntStateOf(45) }
+    var secondsLeft by remember { mutableIntStateOf(initialCountdown) }
 
     LaunchedEffect(Unit) {
         while (secondsLeft > 0) {
@@ -231,7 +336,7 @@ fun IncomingOrderScreen(
 
                 Spacer(modifier = Modifier.height(20.dp))
 
-                // Circular Countdown Timer
+                // Circular Countdown Timer (matching 55-60s expires_at)
                 Box(
                     modifier = Modifier
                         .size(110.dp)
@@ -323,7 +428,7 @@ fun IncomingOrderScreen(
 
                 Spacer(modifier = Modifier.height(20.dp))
 
-                // Route Steps Card
+                // Route Steps Card with distances
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(20.dp),
@@ -353,7 +458,7 @@ fun IncomingOrderScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
                                 Text(
-                                    text = "PICKUP (0.8 km away)",
+                                    text = "PICKUP ($pickupDistance)",
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         fontWeight = FontWeight.Bold,
                                         color = EmeraldPrimary
@@ -398,7 +503,7 @@ fun IncomingOrderScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
                                 Text(
-                                    text = "DROP-OFF (2.4 km trip)",
+                                    text = "DROP-OFF ($dropDistance)",
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         fontWeight = FontWeight.Bold,
                                         color = AmberAccent
@@ -465,3 +570,4 @@ fun IncomingOrderScreen(
         }
     }
 }
+

@@ -34,9 +34,15 @@ class LocationTracker(
     private val coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var trackingJob: Job? = null
 
-    // Default to Bengaluru central darkstore hub (12.9716, 77.5946)
-    private val _currentLocation = MutableStateFlow<Pair<Double, Double>>(Pair(12.9716, 77.5946))
+    // Default to central darkstore hub (Sindhanur: 15.8061517, 76.7650682)
+    private val _currentLocation = MutableStateFlow<Pair<Double, Double>>(Pair(15.8061517, 76.7650682))
     val currentLocation: StateFlow<Pair<Double, Double>> = _currentLocation.asStateFlow()
+
+    fun setDefaultLocation(lat: Double, lng: Double) {
+        if (lat != 0.0 && lng != 0.0 && !_isTracking.value) {
+            _currentLocation.value = Pair(lat, lng)
+        }
+    }
 
     private val _isTracking = MutableStateFlow(false)
     val isTracking: StateFlow<Boolean> = _isTracking.asStateFlow()

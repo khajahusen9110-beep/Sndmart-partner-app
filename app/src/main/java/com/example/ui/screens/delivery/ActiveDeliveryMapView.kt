@@ -134,8 +134,15 @@ fun ActiveDeliveryMapView(
             boundsBuilder.include(dropLatLng)
         }
 
-        // 4. Polyline from Directions API
-        val pointsToDraw = currentRoute?.points ?: emptyList()
+        // 4. Polyline from Directions API or direct fallback route
+        val pointsToDraw = if (!currentRoute?.points.isNullOrEmpty()) {
+            currentRoute!!.points
+        } else if (targetLat != 0.0 && targetLng != 0.0 && partnerCurrentLat != 0.0 && partnerCurrentLng != 0.0) {
+            listOf(partnerLatLng, LatLng(targetLat, targetLng))
+        } else {
+            emptyList()
+        }
+
         if (pointsToDraw.isNotEmpty()) {
             val polylineColor = if (isHeadingToPickup) {
                 android.graphics.Color.parseColor("#00897B") // Teal for Pickup
@@ -324,8 +331,35 @@ fun ActiveDeliveryMapView(
                         )
                         Spacer(modifier = Modifier.height(2.dp))
 
-                        val distanceText = routeInfo?.distanceText ?: "Calculating..."
-                        val durationText = routeInfo?.durationText ?: "Calculating..."
+                        val directMeters = remember(partnerCurrentLat, partnerCurrentLng, targetLat, targetLng) {
+                            if (targetLat != 0.0 && targetLng != 0.0 && partnerCurrentLat != 0.0 && partnerCurrentLng != 0.0) {
+                                val results = FloatArray(1)
+                                android.location.Location.distanceBetween(
+                                    partnerCurrentLat,
+                                    partnerCurrentLng,
+                                    targetLat,
+                                    targetLng,
+                                    results
+                                )
+                                results[0]
+                            } else {
+                                null
+                            }
+                        }
+
+                        val fallbackDistanceKm = if (isHeadingToPickup) assignment.estimatedPickupDistanceKm else assignment.estimatedDropDistanceKm
+                        val fallbackMins = assignment.estimatedDeliveryMinutes ?: 15
+
+                        val distanceText = routeInfo?.distanceText ?: directMeters?.let { meters ->
+                            if (meters >= 1000f) String.format(java.util.Locale.US, "%.1f km", meters / 1000f)
+                            else "${meters.toInt()} m"
+                        } ?: (if (fallbackDistanceKm > 0.0) String.format(java.util.Locale.US, "%.1f km", fallbackDistanceKm) else "Calculating...")
+
+                        val durationText = routeInfo?.durationText ?: directMeters?.let { meters ->
+                            val mins = (meters / (30000f / 60f)).toInt().coerceAtLeast(1)
+                            "$mins mins"
+                        } ?: (if (fallbackMins > 0) "$fallbackMins mins" else "Calculating...")
+
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
                                 Icons.Default.DirectionsCar,

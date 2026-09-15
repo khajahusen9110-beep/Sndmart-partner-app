@@ -38,9 +38,12 @@ fun DeliveriesScreen(
 
     val assignments by viewModel.assignments.collectAsState()
     val batches by viewModel.batches.collectAsState()
+    val isDataLoading by viewModel.isDataLoading.collectAsState()
+    val canLoadMore by viewModel.canLoadMoreDeliveries.collectAsState()
+    val isLoadingMore by viewModel.isLoadingMoreDeliveries.collectAsState()
 
     val activeAssignments = assignments.filter {
-        it.status in listOf("assigned", "accepted", "arrived_pickup", "picked_up", "out_for_delivery", "arrived_drop")
+        it.status in listOf("accepted", "arrived_pickup", "picked_up", "out_for_delivery", "arrived_drop")
     }
     val deliveredAssignments = assignments.filter { it.status == "delivered" }
 
@@ -74,68 +77,104 @@ fun DeliveriesScreen(
             }
         }
 
-        when (selectedTab) {
-            0 -> {
-                // Active Assignments Tab
-                if (activeAssignments.isEmpty()) {
-                    EmptyDeliveriesState(
-                        title = "No Active Deliveries",
-                        subtitle = "When you accept an assignment, it will appear here with live navigation and pickup steps.",
-                        onRefresh = { viewModel.refreshDeliveries() }
-                    )
-                } else {
-                    LazyColumn(
-                        contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp)
-                    ) {
-                        items(activeAssignments) { assignment ->
-                            ActiveDeliveryCard(
-                                assignment = assignment,
-                                onClick = { onOpenAssignmentDetail(assignment) }
-                            )
+        if (isDataLoading && assignments.isEmpty()) {
+            DeliveriesListSkeleton(count = 3)
+        } else {
+            when (selectedTab) {
+                0 -> {
+                    // Active Assignments Tab
+                    if (activeAssignments.isEmpty()) {
+                        EmptyDeliveriesState(
+                            title = "No Active Deliveries",
+                            subtitle = "When you accept an assignment, it will appear here with live navigation and pickup steps.",
+                            onRefresh = { viewModel.refreshDeliveries() }
+                        )
+                    } else {
+                        LazyColumn(
+                            contentPadding = PaddingValues(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            items(activeAssignments) { assignment ->
+                                ActiveDeliveryCard(
+                                    assignment = assignment,
+                                    onClick = { onOpenAssignmentDetail(assignment) }
+                                )
+                            }
                         }
                     }
                 }
-            }
 
-            1 -> {
-                // Multi-order Batches Tab
-                if (batches.isEmpty()) {
-                    EmptyDeliveriesState(
-                        title = "No Multi-Order Batches",
-                        subtitle = "When the system groups nearby pickups into a single multi-drop route, batches appear here.",
-                        onRefresh = null
-                    )
-                } else {
-                    LazyColumn(
-                        contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        items(batches) { batch ->
-                            BatchDetailCard(
-                                batch = batch,
-                                onSelectAssignment = onOpenAssignmentDetail
-                            )
+                1 -> {
+                    // Multi-order Batches Tab
+                    if (batches.isEmpty()) {
+                        EmptyDeliveriesState(
+                            title = "No Multi-Order Batches",
+                            subtitle = "When the system groups nearby pickups into a single multi-drop route, batches appear here.",
+                            onRefresh = null
+                        )
+                    } else {
+                        LazyColumn(
+                            contentPadding = PaddingValues(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            items(batches) { batch ->
+                                BatchDetailCard(
+                                    batch = batch,
+                                    onSelectAssignment = onOpenAssignmentDetail
+                                )
+                            }
                         }
                     }
                 }
-            }
 
-            2 -> {
-                // Delivered History Tab
-                if (deliveredAssignments.isEmpty()) {
-                    EmptyDeliveriesState(
-                        title = "No Completed Deliveries Yet",
-                        subtitle = "Completed tasks with earnings and customer OTP verification will be archived here.",
-                        onRefresh = null
-                    )
-                } else {
-                    LazyColumn(
-                        contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        items(deliveredAssignments) { assignment ->
-                            DeliveredHistoryCard(assignment = assignment)
+                2 -> {
+                    // Delivered History Tab
+                    if (deliveredAssignments.isEmpty()) {
+                        EmptyDeliveriesState(
+                            title = "No Completed Deliveries Yet",
+                            subtitle = "Completed tasks with earnings and customer OTP verification will be archived here.",
+                            onRefresh = null
+                        )
+                    } else {
+                        LazyColumn(
+                            contentPadding = PaddingValues(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            items(deliveredAssignments) { assignment ->
+                                DeliveredHistoryCard(assignment = assignment)
+                            }
+                            if (canLoadMore || isLoadingMore) {
+                                item {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 12.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (isLoadingMore) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(28.dp),
+                                                strokeWidth = 3.dp,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        } else {
+                                            OutlinedButton(
+                                                onClick = { viewModel.loadMoreDeliveries() },
+                                                shape = RoundedCornerShape(20.dp),
+                                                modifier = Modifier.testTag("load_more_deliveries_btn")
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Refresh,
+                                                    contentDescription = "Load More",
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text("Load Earlier Deliveries")
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

@@ -1,5 +1,13 @@
 package com.example.ui.screens.delivery
 
+import android.Manifest
+import android.content.ActivityNotFoundException
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.net.Uri
+import android.util.Log
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -21,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -28,10 +37,19 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.example.data.model.DeliveryAssignment
+import com.example.data.model.OrderItem
+import com.example.data.model.UploadState
 import com.example.ui.MainViewModel
 import com.example.ui.components.*
 import com.example.ui.theme.*
+import com.example.util.ImageUtils
+import kotlinx.coroutines.launch
+import java.io.ByteArrayOutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -40,13 +58,251 @@ fun ActiveDeliveryDetailScreen(
     viewModel: MainViewModel,
     onBack: () -> Unit
 ) {
+    val context = LocalContext.current
     val focusManager = LocalFocusManager.current
+    val coroutineScope = rememberCoroutineScope()
+
     var deliveryOtp by remember { mutableStateOf("") }
-    var pickupPhotoCaptured by remember { mutableStateOf(assignment.pickupPhotoUrl != null) }
-    var dropPhotoCaptured by remember { mutableStateOf(assignment.deliveredPhotoUrl != null) }
+
+    val pickupUploadState by viewModel.pickupPhotoUploadState.collectAsState()
+    val dropUploadState by viewModel.dropPhotoUploadState.collectAsState()
+
+    var lastPickupPhotoBytes by remember { mutableStateOf<ByteArray?>(null) }
+    var lastDropPhotoBytes by remember { mutableStateOf<ByteArray?>(null) }
+
+    LaunchedEffect(assignment.id, assignment.pickupPhotoUrl) {
+        viewModel.resetPickupPhotoUploadState(assignment.pickupPhotoUrl)
+    }
+
+    LaunchedEffect(assignment.id, assignment.deliveredPhotoUrl) {
+        viewModel.resetDropPhotoUploadState(assignment.deliveredPhotoUrl)
+    }
+
+    val isUploadingPickupPhoto = pickupUploadState is UploadState.Uploading
+    val currentPickupPhotoPath = (pickupUploadState as? UploadState.Success)?.path
+        ?: assignment.pickupPhotoUrl.orEmpty()
+    val isPickupPhotoSuccess = pickupUploadState is UploadState.Success || currentPickupPhotoPath.isNotBlank()
+
+    val isUploadingDropPhoto = dropUploadState is UploadState.Uploading
+    val currentDropPhotoPath = (dropUploadState as? UploadState.Success)?.path
+        ?: assignment.deliveredPhotoUrl.orEmpty()
+    val isDropPhotoSuccess = dropUploadState is UploadState.Success || currentDropPhotoPath.isNotBlank()
+
+    var showPickupPhotoOptionsDialog by remember { mutableStateOf(false) }
+    var showDropPhotoOptionsDialog by remember { mutableStateOf(false) }
+
     var showCodCashDialog by remember { mutableStateOf(false) }
     val isActionLoading by viewModel.isActionLoading.collectAsState()
     val currentLocation by viewModel.currentLocation.collectAsState()
+
+    var orderItems by remember(assignment.id, assignment.orderId) {
+        mutableStateOf(assignment.orderItems)
+    }
+    var isLoadingItems by remember { mutableStateOf(false) }
+
+    LaunchedEffect(assignment.id, assignment.orderId, assignment.orderNumber) {
+        val effectiveId = assignment.orderId.ifBlank { assignment.orders?.id.orEmpty() }
+        if (orderItems.isEmpty() && effectiveId.isNotBlank()) {
+            isLoadingItems = true
+            val items = viewModel.fetchOrderItems(effectiveId)
+            if (items.isNotEmpty()) {
+                orderItems = items
+            }
+            isLoadingItems = false
+        }
+    }
+
+    fun startPickupPhotoUpload(bytes: ByteArray) {
+        lastPickupPhotoBytes = bytes
+        coroutineScope.launch {
+            viewModel.uploadPickupPhoto(assignment.id, bytes)
+        }
+    }
+
+    fun retryPickupPhotoUpload() {
+        val bytes = lastPickupPhotoBytes
+        if (bytes != null && bytes.isNotEmpty()) {
+            coroutineScope.launch {
+                viewModel.uploadPickupPhoto(assignment.id, bytes)
+            }
+        } else {
+            showPickupPhotoOptionsDialog = true
+        }
+    }
+
+    // Safe pickup camera & photo picker launchers
+    val pickupCameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicturePreview()
+    ) { bitmap ->
+        if (bitmap != null) {
+            try {
+                val compressed = ImageUtils.compressAndResizeBitmap(bitmap)
+                startPickupPhotoUpload(compressed)
+            } catch (e: Exception) {
+                Log.e("ActiveDeliveryDetail", "Failed to compress pickup photo: ${e.message}", e)
+                viewModel.showMessage("Failed to process photo: ${e.message}")
+            }
+        }
+    }
+
+    val pickupCameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            try {
+                pickupCameraLauncher.launch(null)
+            } catch (e: ActivityNotFoundException) {
+                Log.e("ActiveDeliveryDetail", "No camera app found: ${e.message}", e)
+                viewModel.showMessage("No camera app found on device. Please select from gallery.")
+            } catch (e: Exception) {
+                Log.e("ActiveDeliveryDetail", "Failed to open camera: ${e.message}", e)
+                viewModel.showMessage("Couldn't open camera, please try again")
+            }
+        } else {
+            viewModel.showMessage("Camera permission is required to photograph the order bag")
+        }
+    }
+
+    val pickupGalleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val compressed = ImageUtils.compressAndResizeUri(context, uri)
+                if (compressed != null && compressed.isNotEmpty()) {
+                    startPickupPhotoUpload(compressed)
+                } else {
+                    viewModel.showMessage("Unable to read selected photo")
+                }
+            } catch (e: Exception) {
+                Log.e("ActiveDeliveryDetail", "Error reading image URI: ${e.message}", e)
+                viewModel.showMessage("Failed to load photo: ${e.message}")
+            }
+        }
+    }
+
+    fun launchPickupCameraSafely() {
+        try {
+            val hasCameraPermission = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.CAMERA
+            ) == PackageManager.PERMISSION_GRANTED
+
+            if (hasCameraPermission) {
+                pickupCameraLauncher.launch(null)
+            } else {
+                pickupCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+            }
+        } catch (e: ActivityNotFoundException) {
+            Log.e("ActiveDeliveryDetail", "No camera app found: ${e.message}", e)
+            viewModel.showMessage("No camera app available. Please choose from gallery.")
+        } catch (e: Exception) {
+            Log.e("ActiveDeliveryDetail", "Camera launch error: ${e.message}", e)
+            viewModel.showMessage("Couldn't open camera, please try again")
+        }
+    }
+
+    fun uploadDemoPickupPhoto() {
+        try {
+            val rawBytes = createFallbackProofBytes("PICKUP_BAG_VERIFICATION", assignment.orderNumber)
+            val compressed = ImageUtils.compressAndResizeBytes(rawBytes)
+            startPickupPhotoUpload(compressed)
+        } catch (e: Exception) {
+            viewModel.showMessage("Failed to create demo photo: ${e.message}")
+        }
+    }
+
+    fun startDropPhotoUpload(bytes: ByteArray) {
+        lastDropPhotoBytes = bytes
+        coroutineScope.launch {
+            viewModel.uploadDeliveredPhoto(assignment.id, bytes)
+        }
+    }
+
+    fun retryDropPhotoUpload() {
+        val bytes = lastDropPhotoBytes
+        if (bytes != null && bytes.isNotEmpty()) {
+            coroutineScope.launch {
+                viewModel.uploadDeliveredPhoto(assignment.id, bytes)
+            }
+        } else {
+            showDropPhotoOptionsDialog = true
+        }
+    }
+
+    // Safe doorstep photo launchers
+    val dropCameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicturePreview()
+    ) { bitmap ->
+        if (bitmap != null) {
+            try {
+                val compressed = ImageUtils.compressAndResizeBitmap(bitmap)
+                startDropPhotoUpload(compressed)
+            } catch (e: Exception) {
+                viewModel.showMessage("Failed to process photo: ${e.message}")
+            }
+        }
+    }
+
+    val dropCameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            try {
+                dropCameraLauncher.launch(null)
+            } catch (e: ActivityNotFoundException) {
+                viewModel.showMessage("No camera app found on device. Please select from gallery.")
+            } catch (e: Exception) {
+                viewModel.showMessage("Couldn't open camera, please try again")
+            }
+        } else {
+            viewModel.showMessage("Camera permission is required to photograph doorstep delivery")
+        }
+    }
+
+    val dropGalleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val compressed = ImageUtils.compressAndResizeUri(context, uri)
+                if (compressed != null && compressed.isNotEmpty()) {
+                    startDropPhotoUpload(compressed)
+                }
+            } catch (e: Exception) {
+                viewModel.showMessage("Failed to load photo: ${e.message}")
+            }
+        }
+    }
+
+    fun launchDropCameraSafely() {
+        try {
+            val hasCameraPermission = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.CAMERA
+            ) == PackageManager.PERMISSION_GRANTED
+
+            if (hasCameraPermission) {
+                dropCameraLauncher.launch(null)
+            } else {
+                dropCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+            }
+        } catch (e: ActivityNotFoundException) {
+            viewModel.showMessage("No camera app available. Please choose from gallery.")
+        } catch (e: Exception) {
+            viewModel.showMessage("Couldn't open camera, please try again")
+        }
+    }
+
+    fun uploadDemoDropPhoto() {
+        try {
+            val rawBytes = createFallbackProofBytes("DOORSTEP_DROP_PROOF", assignment.orderNumber)
+            val compressed = ImageUtils.compressAndResizeBytes(rawBytes)
+            startDropPhotoUpload(compressed)
+        } catch (e: Exception) {
+            viewModel.showMessage("Failed to create demo photo: ${e.message}")
+        }
+    }
 
     val currentStatus = assignment.status
 
@@ -204,9 +460,12 @@ fun ActiveDeliveryDetailScreen(
 
             // Order Items & Checklist Card
             Card(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("order_items_card"),
                 shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(
@@ -214,32 +473,162 @@ fun ActiveDeliveryDetailScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Order Package Checklist (${assignment.itemCount} items)",
-                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.Inventory2,
+                                contentDescription = null,
+                                tint = EmeraldPrimary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            val totalItemQty = if (orderItems.isNotEmpty()) orderItems.sumOf { it.quantity } else assignment.itemCount
+                            Text(
+                                text = "Order Items ($totalItemQty items)",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                            )
+                        }
                         Surface(
-                            color = if (assignment.paymentMode == "COD") AmberContainer else EmeraldContainer,
+                            color = if (assignment.paymentMode.equals("COD", ignoreCase = true)) AmberContainer else EmeraldContainer,
                             shape = RoundedCornerShape(6.dp)
                         ) {
                             Text(
-                                text = if (assignment.paymentMode == "COD") "COLLECT CASH: ₹${assignment.totalAmount.toInt()}" else "PREPAID ORDER",
+                                text = if (assignment.paymentMode.equals("COD", ignoreCase = true)) "COLLECT CASH: ₹${assignment.totalAmount.toInt()}" else "PREPAID ORDER",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontWeight = FontWeight.Bold,
-                                    color = if (assignment.paymentMode == "COD") AmberOnContainer else EmeraldOnContainer
+                                    color = if (assignment.paymentMode.equals("COD", ignoreCase = true)) AmberOnContainer else EmeraldOnContainer
                                 ),
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                             )
                         }
                     }
 
+                    Spacer(modifier = Modifier.height(12.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    Text(
-                        text = assignment.itemsSummary,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    if (isLoadingItems) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 12.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                color = EmeraldPrimary,
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                "Loading order items...",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    } else if (orderItems.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            orderItems.forEachIndexed { index, item ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = item.productName.ifBlank { "Item #${index + 1}" },
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            if (!item.variantLabel.isNullOrBlank()) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(4.dp),
+                                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+                                                ) {
+                                                    Text(
+                                                        text = item.variantLabel,
+                                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                            }
+                                            val unitPriceText = if (item.unitPrice > 0) " × ₹${item.unitPrice.toInt()}" else ""
+                                            Text(
+                                                text = "Qty: ${item.quantity}$unitPriceText",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                    val itemTotal = if (item.totalPrice > 0) item.totalPrice else (item.unitPrice * item.quantity)
+                                    Text(
+                                        text = "₹${itemTotal.toInt()}",
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        Text(
+                            text = assignment.itemsSummary.ifBlank { "Standard DarkStore Package (${assignment.itemCount} items)" },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Grand Total Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Order Total Amount",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        val total = if (assignment.totalAmount > 0) {
+                            assignment.totalAmount
+                        } else if (orderItems.isNotEmpty()) {
+                            orderItems.sumOf { it.totalPrice }
+                        } else {
+                            0.0
+                        }
+                        Text(
+                            text = "₹${total.toInt()}",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // Payout Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Your Delivery Payout",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                            color = EmeraldPrimary
+                        )
+                        Text(
+                            text = "+ ₹${assignment.deliveryFee.toInt()}",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = EmeraldPrimary
+                        )
+                    }
                 }
             }
 
@@ -269,40 +658,152 @@ fun ActiveDeliveryDetailScreen(
 
                             Spacer(modifier = Modifier.height(14.dp))
 
-                            // Photo capture toggle
+                            // Photo capture with genuine server upload
                             OutlinedButton(
-                                onClick = { pickupPhotoCaptured = true },
+                                onClick = {
+                                    if (!isUploadingPickupPhoto) {
+                                        showPickupPhotoOptionsDialog = true
+                                    }
+                                },
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .testTag("capture_pickup_photo_button"),
                                 shape = RoundedCornerShape(12.dp),
+                                enabled = !isActionLoading && !isUploadingPickupPhoto,
                                 colors = ButtonDefaults.outlinedButtonColors(
-                                    containerColor = if (pickupPhotoCaptured) EmeraldContainer else Color.Transparent
+                                    containerColor = when {
+                                        isPickupPhotoSuccess -> EmeraldContainer
+                                        pickupUploadState is UploadState.Error -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                                        else -> Color.Transparent
+                                    }
                                 )
                             ) {
-                                Icon(
-                                    imageVector = if (pickupPhotoCaptured) Icons.Default.CheckCircle else Icons.Default.CameraAlt,
-                                    contentDescription = null,
-                                    tint = if (pickupPhotoCaptured) EmeraldPrimary else MaterialTheme.colorScheme.onSurface
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = if (pickupPhotoCaptured) "Pickup Photo Attached ✓" else "Take / Upload Bag Photo (Mandatory)",
-                                    fontWeight = FontWeight.Bold
-                                )
+                                when {
+                                    isUploadingPickupPhoto -> {
+                                        CircularProgressIndicator(modifier = Modifier.size(18.dp), color = EmeraldPrimary, strokeWidth = 2.dp)
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Uploading Bag Photo...", fontWeight = FontWeight.Bold)
+                                    }
+                                    isPickupPhotoSuccess -> {
+                                        Icon(
+                                            imageVector = Icons.Default.CheckCircle,
+                                            contentDescription = null,
+                                            tint = EmeraldPrimary
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "Pickup Photo Attached ✓",
+                                            fontWeight = FontWeight.Bold,
+                                            color = EmeraldPrimary
+                                        )
+                                    }
+                                    pickupUploadState is UploadState.Error -> {
+                                        Icon(
+                                            imageVector = Icons.Default.ErrorOutline,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.error
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "Upload Failed (Tap to Change)",
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                    }
+                                    else -> {
+                                        Icon(
+                                            imageVector = Icons.Default.CameraAlt,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "Take / Upload Bag Photo (Mandatory)",
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Error card with retry affordance
+                            if (pickupUploadState is UploadState.Error) {
+                                val errorMsg = (pickupUploadState as UploadState.Error).message
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.85f)
+                                    )
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                imageVector = Icons.Default.ErrorOutline,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.error,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = "Upload Failed",
+                                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                                color = MaterialTheme.colorScheme.onErrorContainer
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = errorMsg,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onErrorContainer
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.End
+                                        ) {
+                                            OutlinedButton(
+                                                onClick = { showPickupPhotoOptionsDialog = true },
+                                                modifier = Modifier.height(36.dp),
+                                                shape = RoundedCornerShape(8.dp),
+                                                contentPadding = PaddingValues(horizontal = 10.dp)
+                                            ) {
+                                                Text("Choose Other", style = MaterialTheme.typography.labelMedium)
+                                            }
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Button(
+                                                onClick = { retryPickupPhotoUpload() },
+                                                modifier = Modifier
+                                                    .height(36.dp)
+                                                    .testTag("retry_pickup_upload_button"),
+                                                shape = RoundedCornerShape(8.dp),
+                                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                                                contentPadding = PaddingValues(horizontal = 12.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Refresh,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text("Retry Upload", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                    }
+                                }
                             }
 
                             Spacer(modifier = Modifier.height(14.dp))
 
                             Button(
                                 onClick = {
-                                    if (!pickupPhotoCaptured) {
-                                        viewModel.showMessage("Mandatory: Please photograph the packed order at the counter")
+                                    if (!isPickupPhotoSuccess || currentPickupPhotoPath.isBlank()) {
+                                        viewModel.showMessage("Mandatory: Please photograph and upload the packed order bag first")
                                         return@Button
                                     }
                                     viewModel.markPickedUp(
                                         assignment.id,
-                                        "https://images.unsplash.com/photo-1544717305-2782549b5136?w=600"
+                                        currentPickupPhotoPath
                                     )
                                 },
                                 modifier = Modifier
@@ -310,7 +811,7 @@ fun ActiveDeliveryDetailScreen(
                                     .height(52.dp)
                                     .testTag("mark_picked_up_button"),
                                 shape = RoundedCornerShape(12.dp),
-                                enabled = !isActionLoading && pickupPhotoCaptured,
+                                enabled = !isActionLoading && isPickupPhotoSuccess && currentPickupPhotoPath.isNotBlank(),
                                 colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
                             ) {
                                 if (isActionLoading) {
@@ -446,27 +947,139 @@ fun ActiveDeliveryDetailScreen(
 
                             Spacer(modifier = Modifier.height(12.dp))
 
-                            // Delivery Doorstep Photo Proof
+                            // Delivery Doorstep Photo Proof with genuine server upload
                             OutlinedButton(
-                                onClick = { dropPhotoCaptured = true },
+                                onClick = {
+                                    if (!isUploadingDropPhoto) {
+                                        showDropPhotoOptionsDialog = true
+                                    }
+                                },
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .testTag("capture_delivered_photo_button"),
                                 shape = RoundedCornerShape(12.dp),
+                                enabled = !isActionLoading && !isUploadingDropPhoto,
                                 colors = ButtonDefaults.outlinedButtonColors(
-                                    containerColor = if (dropPhotoCaptured) EmeraldContainer else Color.Transparent
+                                    containerColor = when {
+                                        isDropPhotoSuccess -> EmeraldContainer
+                                        dropUploadState is UploadState.Error -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                                        else -> Color.Transparent
+                                    }
                                 )
                             ) {
-                                Icon(
-                                    imageVector = if (dropPhotoCaptured) Icons.Default.CheckCircle else Icons.Default.CameraAlt,
-                                    contentDescription = null,
-                                    tint = if (dropPhotoCaptured) EmeraldPrimary else MaterialTheme.colorScheme.onSurface
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = if (dropPhotoCaptured) "Doorstep Photo Attached ✓" else "Take Doorstep Photo (Mandatory)",
-                                    fontWeight = FontWeight.Bold
-                                )
+                                when {
+                                    isUploadingDropPhoto -> {
+                                        CircularProgressIndicator(modifier = Modifier.size(18.dp), color = EmeraldPrimary, strokeWidth = 2.dp)
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Uploading Doorstep Photo...", fontWeight = FontWeight.Bold)
+                                    }
+                                    isDropPhotoSuccess -> {
+                                        Icon(
+                                            imageVector = Icons.Default.CheckCircle,
+                                            contentDescription = null,
+                                            tint = EmeraldPrimary
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "Doorstep Photo Attached ✓",
+                                            fontWeight = FontWeight.Bold,
+                                            color = EmeraldPrimary
+                                        )
+                                    }
+                                    dropUploadState is UploadState.Error -> {
+                                        Icon(
+                                            imageVector = Icons.Default.ErrorOutline,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.error
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "Upload Failed (Tap to Change)",
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                    }
+                                    else -> {
+                                        Icon(
+                                            imageVector = Icons.Default.CameraAlt,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "Take Doorstep Photo (Mandatory)",
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Error card with retry affordance
+                            if (dropUploadState is UploadState.Error) {
+                                val errorMsg = (dropUploadState as UploadState.Error).message
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.85f)
+                                    )
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                imageVector = Icons.Default.ErrorOutline,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.error,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = "Upload Failed",
+                                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                                color = MaterialTheme.colorScheme.onErrorContainer
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = errorMsg,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onErrorContainer
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.End
+                                        ) {
+                                            OutlinedButton(
+                                                onClick = { showDropPhotoOptionsDialog = true },
+                                                modifier = Modifier.height(36.dp),
+                                                shape = RoundedCornerShape(8.dp),
+                                                contentPadding = PaddingValues(horizontal = 10.dp)
+                                            ) {
+                                                Text("Choose Other", style = MaterialTheme.typography.labelMedium)
+                                            }
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Button(
+                                                onClick = { retryDropPhotoUpload() },
+                                                modifier = Modifier
+                                                    .height(36.dp)
+                                                    .testTag("retry_drop_upload_button"),
+                                                shape = RoundedCornerShape(8.dp),
+                                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                                                contentPadding = PaddingValues(horizontal = 12.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Refresh,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text("Retry Upload", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                    }
+                                }
                             }
 
                             Spacer(modifier = Modifier.height(16.dp))
@@ -474,7 +1087,7 @@ fun ActiveDeliveryDetailScreen(
                             Button(
                                 onClick = {
                                     focusManager.clearFocus()
-                                    if (!dropPhotoCaptured) {
+                                    if (!isDropPhotoSuccess || currentDropPhotoPath.isBlank()) {
                                         viewModel.showMessage("Mandatory: Please photograph the delivered packet at doorstep")
                                         return@Button
                                     }
@@ -485,7 +1098,7 @@ fun ActiveDeliveryDetailScreen(
                                     viewModel.completeDelivery(
                                         assignmentId = assignment.id,
                                         otp = deliveryOtp,
-                                        photoUrl = "https://images.unsplash.com/photo-1544717305-2782549b5136?w=600"
+                                        photoUrl = currentDropPhotoPath
                                     ) { success ->
                                         if (success) {
                                             if (assignment.paymentMode == "COD") {
@@ -501,7 +1114,7 @@ fun ActiveDeliveryDetailScreen(
                                     .height(52.dp)
                                     .testTag("complete_delivery_button"),
                                 shape = RoundedCornerShape(12.dp),
-                                enabled = !isActionLoading && deliveryOtp.length >= 4 && dropPhotoCaptured,
+                                enabled = !isActionLoading && deliveryOtp.length >= 4 && isDropPhotoSuccess && currentDropPhotoPath.isNotBlank(),
                                 colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
                             ) {
                                 if (isActionLoading) {
@@ -578,4 +1191,160 @@ fun ActiveDeliveryDetailScreen(
             }
         )
     }
+
+    if (showPickupPhotoOptionsDialog) {
+        AlertDialog(
+            onDismissRequest = { showPickupPhotoOptionsDialog = false },
+            icon = { Icon(Icons.Default.CameraAlt, contentDescription = null, tint = EmeraldPrimary, modifier = Modifier.size(32.dp)) },
+            title = { Text("Take / Upload Bag Photo") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Photograph the packed bag to verify items before starting pickup.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    OutlinedButton(
+                        onClick = {
+                            showPickupPhotoOptionsDialog = false
+                            launchPickupCameraSafely()
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.CameraAlt, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Open Camera")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            showPickupPhotoOptionsDialog = false
+                            try {
+                                pickupGalleryLauncher.launch("image/*")
+                            } catch (e: Exception) {
+                                Log.e("ActiveDeliveryDetail", "Gallery launch error: ${e.message}", e)
+                                viewModel.showMessage("Couldn't open gallery")
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.PhotoLibrary, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Choose from Gallery")
+                    }
+                    TextButton(
+                        onClick = {
+                            showPickupPhotoOptionsDialog = false
+                            uploadDemoPickupPhoto()
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.BugReport, contentDescription = null)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Use Test Bag Photo (Emulator/Test)")
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showPickupPhotoOptionsDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showDropPhotoOptionsDialog) {
+        AlertDialog(
+            onDismissRequest = { showDropPhotoOptionsDialog = false },
+            icon = { Icon(Icons.Default.CameraAlt, contentDescription = null, tint = EmeraldPrimary, modifier = Modifier.size(32.dp)) },
+            title = { Text("Take Doorstep Photo") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Photograph the delivered package at the customer doorstep.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    OutlinedButton(
+                        onClick = {
+                            showDropPhotoOptionsDialog = false
+                            launchDropCameraSafely()
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.CameraAlt, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Open Camera")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            showDropPhotoOptionsDialog = false
+                            try {
+                                dropGalleryLauncher.launch("image/*")
+                            } catch (e: Exception) {
+                                Log.e("ActiveDeliveryDetail", "Gallery launch error: ${e.message}", e)
+                                viewModel.showMessage("Couldn't open gallery")
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.PhotoLibrary, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Choose from Gallery")
+                    }
+                    TextButton(
+                        onClick = {
+                            showDropPhotoOptionsDialog = false
+                            uploadDemoDropPhoto()
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.BugReport, contentDescription = null)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Use Test Doorstep Photo (Emulator/Test)")
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showDropPhotoOptionsDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+}
+
+private fun createFallbackProofBytes(tag: String, orderNum: String): ByteArray {
+    val bitmap = Bitmap.createBitmap(600, 600, Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(bitmap)
+    val paint = android.graphics.Paint().apply {
+        color = android.graphics.Color.DKGRAY
+        isAntiAlias = true
+    }
+    canvas.drawRect(0f, 0f, 600f, 600f, paint)
+    val textPaint = android.graphics.Paint().apply {
+        color = android.graphics.Color.WHITE
+        textSize = 28f
+        isAntiAlias = true
+        textAlign = android.graphics.Paint.Align.CENTER
+    }
+    canvas.drawText("SNDMART DELIVERY PROOF", 300f, 200f, textPaint)
+    canvas.drawText("Order: $orderNum", 300f, 260f, textPaint)
+    canvas.drawText("Type: $tag", 300f, 320f, textPaint)
+    canvas.drawText(
+        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()),
+        300f,
+        380f,
+        textPaint
+    )
+    val stream = ByteArrayOutputStream()
+    bitmap.compress(Bitmap.CompressFormat.JPEG, 85, stream)
+    return stream.toByteArray()
 }

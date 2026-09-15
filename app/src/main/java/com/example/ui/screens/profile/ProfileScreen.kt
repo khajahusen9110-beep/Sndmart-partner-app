@@ -429,15 +429,21 @@ fun ProfileScreen(
                             Column(modifier = Modifier.padding(10.dp)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Row {
-                                        repeat(review.rating.toInt().coerceIn(1, 5)) {
-                                            Icon(Icons.Default.Star, contentDescription = null, tint = AmberAccent, modifier = Modifier.size(14.dp))
-                                        }
-                                    }
+                                    Text(
+                                        text = review.reviewerName,
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                                    )
                                     if (!review.createdAt.isNullOrBlank()) {
                                         Text(text = review.createdAt.take(10), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Row {
+                                    repeat(review.rating.toInt().coerceIn(1, 5)) {
+                                        Icon(Icons.Default.Star, contentDescription = null, tint = AmberAccent, modifier = Modifier.size(14.dp))
                                     }
                                 }
                                 if (!review.comment.isNullOrBlank()) {

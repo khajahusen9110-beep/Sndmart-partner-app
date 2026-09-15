@@ -58,6 +58,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedAssignmentForDetail = MutableStateFlow<DeliveryAssignment?>(null)
     val selectedAssignmentForDetail: StateFlow<DeliveryAssignment?> = _selectedAssignmentForDetail.asStateFlow()
 
+    private val _pickupPhotoUploadState = MutableStateFlow<UploadState>(UploadState.Idle)
+    val pickupPhotoUploadState: StateFlow<UploadState> = _pickupPhotoUploadState.asStateFlow()
+
+    private val _dropPhotoUploadState = MutableStateFlow<UploadState>(UploadState.Idle)
+    val dropPhotoUploadState: StateFlow<UploadState> = _dropPhotoUploadState.asStateFlow()
+
+    fun resetPickupPhotoUploadState(existingUrl: String? = null) {
+        if (!existingUrl.isNullOrBlank()) {
+            _pickupPhotoUploadState.value = UploadState.Success(existingUrl)
+        } else {
+            _pickupPhotoUploadState.value = UploadState.Idle
+        }
+    }
+
+    fun resetDropPhotoUploadState(existingUrl: String? = null) {
+        if (!existingUrl.isNullOrBlank()) {
+            _dropPhotoUploadState.value = UploadState.Success(existingUrl)
+        } else {
+            _dropPhotoUploadState.value = UploadState.Idle
+        }
+    }
+
     private val _isActionLoading = MutableStateFlow(false)
     val isActionLoading: StateFlow<Boolean> = _isActionLoading.asStateFlow()
 
@@ -66,9 +88,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val dataFetchError = repository.dataFetchError
     val isDataLoading = repository.isDataLoading
+    val canLoadMoreDeliveries = repository.canLoadMoreAssignments
+    val isLoadingMoreDeliveries = repository.isLoadingMoreAssignments
 
     val activeAssignments = assignments.map { list ->
-        list.filter { it.status in listOf("assigned", "accepted", "arrived_pickup", "picked_up", "out_for_delivery", "arrived_drop") }
+        list.filter { it.status in listOf("accepted", "arrived_pickup", "picked_up", "out_for_delivery", "arrived_drop") }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val batches = assignments.map { list ->
@@ -98,6 +122,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         collected - remitted
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
+    companion object {
+        const val CURRENT_APP_VERSION = "1.0.0"
+
+        fun compareVersions(a: String, b: String): Int {
+            val pa = a.split('.').map { it.trim().toIntOrNull() ?: 0 }
+            val pb = b.split('.').map { it.trim().toIntOrNull() ?: 0 }
+            for (i in 0 until 3) {
+                val valA = pa.getOrElse(i) { 0 }
+                val valB = pb.getOrElse(i) { 0 }
+                if (valA != valB) return valA - valB
+            }
+            return 0
+        }
+    }
+
+    private val _isCheckingStartup = MutableStateFlow(true)
+    val isCheckingStartup: StateFlow<Boolean> = _isCheckingStartup.asStateFlow()
+
+    private val _blockingUpdateInfo = MutableStateFlow<AppVersionInfo?>(null)
+    val blockingUpdateInfo: StateFlow<AppVersionInfo?> = _blockingUpdateInfo.asStateFlow()
+
+    private val _isUpdateRequired = MutableStateFlow(false)
+    val isUpdateRequired: StateFlow<Boolean> = _isUpdateRequired.asStateFlow()
+
+    private val _maintenanceModeActive = MutableStateFlow(false)
+    val maintenanceModeActive: StateFlow<Boolean> = _maintenanceModeActive.asStateFlow()
+
+    private val _maintenanceMessage = MutableStateFlow<String?>(null)
+    val maintenanceMessage: StateFlow<String?> = _maintenanceMessage.asStateFlow()
+
     private val _cities = MutableStateFlow<List<City>>(emptyList())
     val cities: StateFlow<List<City>> = _cities.asStateFlow()
 
@@ -111,8 +165,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 showMessage(reason)
             }
         }
+        runStartupChecks()
         checkInitialSession()
         loadCities()
+    }
+
+    fun runStartupChecks() {
+        viewModelScope.launch {
+            _isCheckingStartup.value = true
+            try {
+                val versionInfo = repository.checkAppVersion()
+                if (versionInfo != null) {
+                    val minVersion = versionInfo.minimumSupportedVersion
+                    val isBelowMinimum = if (!minVersion.isNullOrBlank()) {
+                        compareVersions(CURRENT_APP_VERSION, minVersion) < 0
+                    } else false
+
+                    if (isBelowMinimum || versionInfo.forceUpdate) {
+                        _blockingUpdateInfo.value = versionInfo
+                        _isUpdateRequired.value = true
+                        _isCheckingStartup.value = false
+                        return@launch
+                    }
+                }
+                _isUpdateRequired.value = false
+                _blockingUpdateInfo.value = null
+
+                val settings = repository.checkMaintenanceMode()
+                if (settings != null && settings.enabled) {
+                    _maintenanceModeActive.value = true
+                    _maintenanceMessage.value = settings.message
+                        ?: "New orders are temporarily paused platform-wide. You can still complete any deliveries already assigned to you."
+                } else {
+                    _maintenanceModeActive.value = false
+                    _maintenanceMessage.value = null
+                }
+            } catch (e: Exception) {
+                Log.e("MainViewModel", "Error during runStartupChecks: ${e.message}")
+            } finally {
+                _isCheckingStartup.value = false
+            }
+        }
     }
 
     fun loadCities() {
@@ -196,18 +289,74 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshDeliveries() {
         viewModelScope.launch {
             _isActionLoading.value = true
-            repository.fetchAssignments()
+            repository.fetchAssignments(page = 0)
             _isActionLoading.value = false
             showMessage("Deliveries refreshed from server")
+        }
+    }
+
+    fun loadMoreDeliveries() {
+        viewModelScope.launch {
+            repository.loadMoreAssignments()
         }
     }
 
     fun refreshAllData() {
         viewModelScope.launch {
             _isActionLoading.value = true
+            runStartupChecks()
             repository.fetchAllBackendData()
             _isActionLoading.value = false
             showMessage("All data refreshed from server")
+        }
+    }
+
+    fun signUpWithPhone(phone: String, password: String, onSent: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            _isActionLoading.value = true
+            val res = repository.signUpWithPhone(phone.trim(), password)
+            _isActionLoading.value = false
+            res.onSuccess {
+                val formatted = repository.formatE164Phone(phone)
+                showMessage("SMS verification code sent to $formatted")
+                onSent(true)
+            }.onFailure {
+                showMessage(it.message ?: "Signup failed. Please try again.")
+                onSent(false)
+            }
+        }
+    }
+
+    fun signInWithPhone(phone: String, password: String) {
+        viewModelScope.launch {
+            _isActionLoading.value = true
+            val res = repository.signInWithPhonePassword(phone.trim(), password)
+            _isActionLoading.value = false
+            res.onSuccess { partner ->
+                if (partner == null) {
+                    _authUiState.value = AuthUiState.OnboardingRequired
+                    showMessage("Login successful! Please complete your KYC verification.")
+                } else {
+                    updateAuthStateForPartner(partner)
+                    showMessage("Welcome back, ${partner.name}!")
+                }
+            }.onFailure {
+                showMessage(it.message ?: "Invalid mobile number or password.")
+            }
+        }
+    }
+
+    fun resendPhoneOtp(phone: String) {
+        viewModelScope.launch {
+            _isActionLoading.value = true
+            val res = repository.resendPhoneOtp(phone.trim())
+            _isActionLoading.value = false
+            val formatted = repository.formatE164Phone(phone)
+            res.onSuccess {
+                showMessage("Verification OTP resent to $formatted")
+            }.onFailure {
+                showMessage("Failed to resend OTP: ${it.message}")
+            }
         }
     }
 
@@ -306,7 +455,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         showMessage("Status: Application still under review.")
                     }
                 } else {
-                    showMessage("Status check complete: Profile under verification.")
+                    _authUiState.value = AuthUiState.OnboardingRequired
+                    showMessage("No application found on server. Please submit your KYC details.")
                 }
             }.onFailure {
                 showMessage("Could not refresh status: ${it.message}")
@@ -314,7 +464,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun requestPhoneOtp(phone: String, onSent: (Boolean) -> Unit) {
+    fun requestPhoneOtp(phone: String, onSent: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
             _isActionLoading.value = true
             val res = repository.requestOtp(phone)
@@ -334,8 +484,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             res.onSuccess { partner ->
                 if (partner == null) {
                     _authUiState.value = AuthUiState.OnboardingRequired
+                    showMessage("Mobile number verified! Proceeding to KYC upload.")
                 } else {
                     updateAuthStateForPartner(partner)
+                    showMessage("Welcome back, ${partner.name}!")
                 }
             }.onFailure {
                 showMessage("Verification error: ${it.message}")
@@ -351,6 +503,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return repository.uploadKycDocument(documentType, bytes)
     }
 
+    fun skipOtpAndProceedToOnboarding(email: String) {
+        val cleanEmail = email.trim().ifBlank { "partner@sndmart.com" }
+        prefs.userEmail = cleanEmail
+        val currentUid = prefs.userId
+        val validUid = if (!currentUid.isNullOrBlank() && currentUid.matches(Regex("^[0-9a-fA-F-]{36}$"))) {
+            currentUid
+        } else {
+            val generated = java.util.UUID.nameUUIDFromBytes("sndmart_partner_$cleanEmail".toByteArray()).toString()
+            prefs.userId = generated
+            generated
+        }
+        _authUiState.value = AuthUiState.OnboardingRequired
+        showMessage("Proceeding to Partner Registration KYC")
+    }
+
     suspend fun getFreshAuthUserId(): String? {
         return repository.getFreshAuthUser().getOrNull() ?: prefs.userId
     }
@@ -360,7 +527,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         phone: String,
         vehicleType: String,
         vehicleNumber: String,
-        cityId: String = "c1111111-1111-1111-1111-111111111111",
+        cityId: String = "a5cd2248-f0f9-41b4-ad54-a31293a8257f",
         aadharUrl: String?,
         licenceUrl: String?
     ) {
@@ -377,10 +544,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
             _isActionLoading.value = false
             res.onSuccess { partner ->
+                // ONLY navigate to "Application Submitted / Under Review" screen HERE, after confirming no error.
                 _authUiState.value = AuthUiState.UnderReview(partner)
-                showMessage("KYC submitted successfully! Application under review.")
-            }.onFailure {
-                showMessage("Onboarding failed: ${it.message}")
+                showMessage("Application submitted successfully! Under review.")
+            }.onFailure { err ->
+                Log.e("MainViewModel", "Delivery partner submit error: ${err.message}", err)
+                // Show real error reason, do NOT navigate to success screen
+                showMessage(err.message ?: "Application submission failed. Please try again.")
             }
         }
     }
@@ -478,15 +648,181 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun respondToAssignment(assignmentId: String, accept: Boolean) {
+    fun dismissIncomingAlert(assignmentId: String) {
+        repository.dismissIncomingAlert(assignmentId)
+    }
+
+    fun acceptOrder(assignment: DeliveryAssignment) {
         viewModelScope.launch {
-            val res = repository.respondToAssignment(assignmentId, accept)
+            _isActionLoading.value = true
+            val res = repository.respondToAssignment(
+                assignmentId = assignment.id,
+                accept = true,
+                assignmentSnapshot = assignment
+            )
+            _isActionLoading.value = false
             res.onSuccess {
-                if (accept) {
-                    val assigned = assignments.value.find { it.id == assignmentId }
-                    _selectedAssignmentForDetail.value = assigned
+                // Immediately close the "New Order Alert" popup and navigate to the active delivery screen
+                repository.dismissIncomingAlert(assignment.id)
+                val accepted = assignments.value.find { it.id == assignment.id }
+                    ?: assignment.copy(status = "accepted", acceptedAt = repository.currentIsoTimestamp())
+                _selectedAssignmentForDetail.value = accepted
+                showMessage("Order accepted! Navigating to active delivery.")
+            }.onFailure { error ->
+                Log.e("MainViewModel", "Accept order error: ${error.message}", error)
+                showMessage("Accept order error: ${error.message ?: "Failed to accept order"}")
+            }
+        }
+    }
+
+    fun rejectOrder(assignmentId: String) {
+        viewModelScope.launch {
+            _isActionLoading.value = true
+            val res = repository.respondToAssignment(assignmentId, accept = false)
+            _isActionLoading.value = false
+            res.onSuccess {
+                repository.dismissIncomingAlert(assignmentId)
+                showMessage("Order declined")
+            }.onFailure { error ->
+                Log.e("MainViewModel", "Reject order error: ${error.message}", error)
+                showMessage("Failed to decline order: ${error.message ?: "Unknown error"}")
+            }
+        }
+    }
+
+    fun respondToAssignment(assignmentId: String, accept: Boolean) {
+        if (accept) {
+            val target = assignments.value.find { it.id == assignmentId }
+                ?: incomingAssignmentAlert.value?.takeIf { it.id == assignmentId }
+                ?: DeliveryAssignment(id = assignmentId)
+            acceptOrder(target)
+        } else {
+            rejectOrder(assignmentId)
+        }
+    }
+
+    fun selectAssignmentById(assignmentId: String) {
+        val found = assignments.value.find { it.id == assignmentId }
+        if (found != null) {
+            _selectedAssignmentForDetail.value = found
+        } else {
+            viewModelScope.launch {
+                val fetched = repository.fetchAssignments()
+                val target = fetched.find { it.id == assignmentId }
+                if (target != null) {
+                    _selectedAssignmentForDetail.value = target
                 }
             }
+        }
+    }
+
+    suspend fun fetchOrderItems(orderId: String): List<OrderItem> {
+        return repository.fetchOrderItems(orderId)
+    }
+
+    suspend fun uploadPickupPhoto(
+        assignmentId: String,
+        imageBytes: ByteArray
+    ): Result<String> {
+        _pickupPhotoUploadState.value = UploadState.Uploading
+        _isActionLoading.value = true
+        return try {
+            val uploadRes = repository.uploadProofPhoto(assignmentId, "pickup", imageBytes)
+            if (uploadRes.isFailure) {
+                val err = uploadRes.exceptionOrNull()?.message ?: "Upload failed. Please try again."
+                Log.e("MainViewModel", "Pickup photo upload failed: $err")
+                _pickupPhotoUploadState.value = UploadState.Error(err)
+                _isActionLoading.value = false
+                showMessage("Upload failed: $err")
+                Result.failure(Exception(err))
+            } else {
+                val photoPath = uploadRes.getOrThrow()
+                val updateRes = repository.updatePickupPhotoUrl(assignmentId, photoPath)
+                _isActionLoading.value = false
+                if (updateRes.isFailure) {
+                    val err = updateRes.exceptionOrNull()?.message ?: "Failed to save photo to order record."
+                    Log.e("MainViewModel", "Update pickup_photo_url failed: $err")
+                    _pickupPhotoUploadState.value = UploadState.Error(err)
+                    showMessage(err)
+                    Result.failure(Exception(err))
+                } else {
+                    _selectedAssignmentForDetail.update { it?.copy(pickupPhotoUrl = photoPath) }
+                    _pickupPhotoUploadState.value = UploadState.Success(photoPath)
+                    showMessage("Pickup photo uploaded successfully!")
+                    Result.success(photoPath)
+                }
+            }
+        } catch (e: Exception) {
+            val err = e.message ?: "Upload failed. Please try again."
+            Log.e("MainViewModel", "Pickup photo upload exception: $err", e)
+            _pickupPhotoUploadState.value = UploadState.Error(err)
+            _isActionLoading.value = false
+            showMessage(err)
+            Result.failure(e)
+        }
+    }
+
+    fun uploadPickupPhoto(
+        assignmentId: String,
+        imageBytes: ByteArray,
+        onSuccess: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            val res = uploadPickupPhoto(assignmentId, imageBytes)
+            res.onSuccess(onSuccess)
+        }
+    }
+
+    suspend fun uploadDeliveredPhoto(
+        assignmentId: String,
+        imageBytes: ByteArray
+    ): Result<String> {
+        _dropPhotoUploadState.value = UploadState.Uploading
+        _isActionLoading.value = true
+        return try {
+            val uploadRes = repository.uploadProofPhoto(assignmentId, "delivered", imageBytes)
+            if (uploadRes.isFailure) {
+                val err = uploadRes.exceptionOrNull()?.message ?: "Upload failed. Please try again."
+                Log.e("MainViewModel", "Delivered photo upload failed: $err")
+                _dropPhotoUploadState.value = UploadState.Error(err)
+                _isActionLoading.value = false
+                showMessage("Upload failed: $err")
+                Result.failure(Exception(err))
+            } else {
+                val photoPath = uploadRes.getOrThrow()
+                val updateRes = repository.updateDeliveredPhotoUrl(assignmentId, photoPath)
+                _isActionLoading.value = false
+                if (updateRes.isFailure) {
+                    val err = updateRes.exceptionOrNull()?.message ?: "Failed to save delivery proof."
+                    Log.e("MainViewModel", "Update delivered_photo_url failed: $err")
+                    _dropPhotoUploadState.value = UploadState.Error(err)
+                    showMessage(err)
+                    Result.failure(Exception(err))
+                } else {
+                    _selectedAssignmentForDetail.update { it?.copy(deliveredPhotoUrl = photoPath) }
+                    _dropPhotoUploadState.value = UploadState.Success(photoPath)
+                    showMessage("Delivery proof photo uploaded successfully!")
+                    Result.success(photoPath)
+                }
+            }
+        } catch (e: Exception) {
+            val err = e.message ?: "Upload failed. Please try again."
+            Log.e("MainViewModel", "Delivered photo upload exception: $err", e)
+            _dropPhotoUploadState.value = UploadState.Error(err)
+            _isActionLoading.value = false
+            showMessage(err)
+            Result.failure(e)
+        }
+    }
+
+    fun uploadDeliveredPhoto(
+        assignmentId: String,
+        imageBytes: ByteArray,
+        onSuccess: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            val res = uploadDeliveredPhoto(assignmentId, imageBytes)
+            res.onSuccess(onSuccess)
         }
     }
 
@@ -498,6 +834,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             res.onSuccess {
                 _selectedAssignmentForDetail.update { it?.copy(status = "picked_up", pickupPhotoUrl = photoUrl) }
                 showMessage("Order marked as Picked Up!")
+            }.onFailure { err ->
+                Log.e("MainViewModel", "Confirm pickup error: ${err.message}", err)
+                showMessage("Confirm pickup error: ${err.message ?: "Failed to mark picked up"}")
             }
         }
     }
@@ -569,79 +908,54 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun fetchAndRegisterFcmToken(showToast: Boolean = false) {
         val app = getApplication<Application>()
+        val cached = prefs.fcmDeviceToken
+        if (cached.isNotBlank()) {
+            _fcmTokenState.value = cached
+            viewModelScope.launch {
+                repository.registerDeliveryPartnerFcmToken(cached)
+            }
+        }
+
+        val availability = com.google.android.gms.common.GoogleApiAvailability.getInstance()
+        val resultCode = availability.isGooglePlayServicesAvailable(app)
+        val hasPlayServices = resultCode == com.google.android.gms.common.ConnectionResult.SUCCESS
+
+        if (!hasPlayServices) {
+            Log.w("MainViewModel", "Google Play Services not available (code: $resultCode). Using persistent local device token.")
+            if (showToast) {
+                showMessage("Device registered for order alerts: ${cached.take(16)}...")
+            }
+            return
+        }
+
         try {
-            if (com.example.util.DeviceUtils.isEmulator()) {
-                Log.d("MainViewModel", "Emulator detected: Using persistent local device token for delivery assignments & alerts")
-                val fallback = prefs.fcmDeviceToken
-                _fcmTokenState.value = fallback
-                viewModelScope.launch {
-                    repository.registerDeviceToken(fallback)
-                    if (showToast) {
-                        showMessage("Device token registered: ${fallback.take(16)}...")
-                    }
-                }
-                return
-            }
-
-            val availability = com.google.android.gms.common.GoogleApiAvailability.getInstance()
-            val resultCode = availability.isGooglePlayServicesAvailable(app)
-            val hasPlayServices = resultCode == com.google.android.gms.common.ConnectionResult.SUCCESS
-
-            if (!hasPlayServices) {
-                Log.w("MainViewModel", "Google Play Services not available (code: $resultCode). Using persistent local device token.")
-                val fallback = prefs.fcmDeviceToken
-                _fcmTokenState.value = fallback
-                viewModelScope.launch {
-                    repository.registerDeviceToken(fallback)
-                    if (showToast) {
-                        showMessage("Device token registered: ${fallback.take(16)}...")
-                    }
-                }
-                return
-            }
-
             FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
                 try {
                     if (task.isSuccessful && !task.result.isNullOrBlank()) {
                         val token = task.result!!
-                        Log.d("MainViewModel", "Fetched FCM token: $token")
+                        Log.i("MainViewModel", "Fetched FCM token: $token")
                         prefs.fcmDeviceToken = token
                         _fcmTokenState.value = token
                         viewModelScope.launch {
-                            repository.registerDeviceToken(token)
-                            if (showToast) {
-                                showMessage("FCM token registered with backend!")
+                            val res = repository.registerDeliveryPartnerFcmToken(token)
+                            if (res.isSuccess) {
+                                Log.i("MainViewModel", "FCM token registered with device_tokens (firebase_project=native)")
+                                if (showToast) {
+                                    showMessage("Device registered for order alerts!")
+                                }
+                            } else {
+                                Log.w("MainViewModel", "Failed to register FCM token: ${res.exceptionOrNull()?.message}")
                             }
                         }
                     } else {
-                        Log.w("MainViewModel", "FCM token retrieval not available: ${task.exception?.message}")
-                        val fallback = prefs.fcmDeviceToken
-                        if (fallback.isNotBlank()) {
-                            _fcmTokenState.value = fallback
-                            viewModelScope.launch {
-                                repository.registerDeviceToken(fallback)
-                            }
-                        }
-                        if (showToast) {
-                            showMessage("Using active local device token: ${fallback.take(16)}...")
-                        }
+                        Log.w("MainViewModel", "FCM token retrieval failed: ${task.exception?.message}")
                     }
                 } catch (e: Exception) {
                     Log.w("MainViewModel", "FCM token handling error: ${e.message}")
-                    val fallback = prefs.fcmDeviceToken
-                    _fcmTokenState.value = fallback
                 }
             }
         } catch (e: Exception) {
-            Log.e("MainViewModel", "FirebaseMessaging exception: ${e.message}", e)
-            val fallback = prefs.fcmDeviceToken
-            _fcmTokenState.value = fallback
-            viewModelScope.launch {
-                repository.registerDeviceToken(fallback)
-            }
-            if (showToast) {
-                showMessage("Device token: ${fallback.take(16)}...")
-            }
+            Log.w("MainViewModel", "FirebaseMessaging exception: ${e.message}")
         }
     }
 

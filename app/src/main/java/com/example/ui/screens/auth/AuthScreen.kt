@@ -12,6 +12,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -47,7 +48,9 @@ fun AuthScreen(
     viewModel: MainViewModel
 ) {
     var activeTab by remember { mutableStateOf(AuthTab.LOGIN) }
-    var emailInput by remember { mutableStateOf("") }
+    var mobileInput by remember {
+        mutableStateOf(viewModel.prefs.userPhone?.filter { it.isDigit() }?.takeLast(10) ?: "")
+    }
     var passwordInput by remember { mutableStateOf("") }
     var confirmPasswordInput by remember { mutableStateOf("") }
     var otpInput by remember { mutableStateOf("") }
@@ -234,7 +237,7 @@ fun AuthScreen(
                                 style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
                             )
                             Text(
-                                text = "Enter your registered email and password",
+                                text = "Enter your registered mobile number and password",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -242,15 +245,25 @@ fun AuthScreen(
                             Spacer(modifier = Modifier.height(18.dp))
 
                             OutlinedTextField(
-                                value = emailInput,
-                                onValueChange = { emailInput = it },
-                                label = { Text("Email Address") },
-                                placeholder = { Text("rider@sndmart.com") },
+                                value = mobileInput,
+                                onValueChange = { input ->
+                                    val digits = input.filter { it.isDigit() }
+                                    mobileInput = if (digits.startsWith("91") && digits.length > 10) {
+                                        digits.drop(2).take(10)
+                                    } else {
+                                        digits.take(10)
+                                    }
+                                },
+                                label = { Text("Mobile Number") },
+                                placeholder = { Text("9876543210") },
+                                prefix = {
+                                    Text("+91 ", fontWeight = FontWeight.Bold, color = EmeraldPrimary)
+                                },
                                 leadingIcon = {
-                                    Icon(Icons.Default.Email, contentDescription = null)
+                                    Icon(Icons.Default.Phone, contentDescription = null, tint = EmeraldPrimary)
                                 },
                                 keyboardOptions = KeyboardOptions(
-                                    keyboardType = KeyboardType.Email,
+                                    keyboardType = KeyboardType.Phone,
                                     imeAction = ImeAction.Next
                                 ),
                                 keyboardActions = KeyboardActions(
@@ -259,7 +272,7 @@ fun AuthScreen(
                                 singleLine = true,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .testTag("login_email_input"),
+                                    .testTag("login_phone_input"),
                                 shape = RoundedCornerShape(12.dp)
                             )
 
@@ -288,8 +301,8 @@ fun AuthScreen(
                                 keyboardActions = KeyboardActions(
                                     onDone = {
                                         focusManager.clearFocus()
-                                        if (emailInput.isNotBlank() && passwordInput.isNotBlank()) {
-                                            viewModel.signInWithEmail(emailInput, passwordInput)
+                                        if (mobileInput.length == 10 && passwordInput.isNotBlank()) {
+                                            viewModel.signInWithPhone(mobileInput, passwordInput)
                                         }
                                     }
                                 ),
@@ -321,15 +334,15 @@ fun AuthScreen(
                             Button(
                                 onClick = {
                                     focusManager.clearFocus()
-                                    if (emailInput.isBlank() || !emailInput.contains("@")) {
-                                        viewModel.showMessage("Please enter a valid email address")
+                                    if (mobileInput.length != 10) {
+                                        viewModel.showMessage("Please enter a valid 10-digit mobile number")
                                         return@Button
                                     }
                                     if (passwordInput.isBlank()) {
                                         viewModel.showMessage("Please enter your password")
                                         return@Button
                                     }
-                                    viewModel.signInWithEmail(emailInput, passwordInput)
+                                    viewModel.signInWithPhone(mobileInput, passwordInput)
                                 },
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -354,12 +367,28 @@ fun AuthScreen(
                         }
 
                         AuthTab.SIGNUP -> {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = EmeraldPrimary.copy(alpha = 0.12f)
+                            ) {
+                                Text(
+                                    text = "STEP 2: MOBILE & OTP VERIFICATION",
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        color = EmeraldPrimary
+                                    )
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
                             Text(
-                                text = "Create Partner Account",
+                                text = "Mobile & OTP Verification",
                                 style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
                             )
                             Text(
-                                text = "Sign up with email to join Sndmart delivery fleet",
+                                text = "Enter your 10-digit mobile number and set a password. We'll send an SMS OTP before KYC document upload.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -367,15 +396,25 @@ fun AuthScreen(
                             Spacer(modifier = Modifier.height(18.dp))
 
                             OutlinedTextField(
-                                value = emailInput,
-                                onValueChange = { emailInput = it },
-                                label = { Text("Email Address") },
-                                placeholder = { Text("your.email@gmail.com") },
+                                value = mobileInput,
+                                onValueChange = { input ->
+                                    val digits = input.filter { it.isDigit() }
+                                    mobileInput = if (digits.startsWith("91") && digits.length > 10) {
+                                        digits.drop(2).take(10)
+                                    } else {
+                                        digits.take(10)
+                                    }
+                                },
+                                label = { Text("Mobile Number (10 digits)") },
+                                placeholder = { Text("9876543210") },
+                                prefix = {
+                                    Text("+91 ", fontWeight = FontWeight.Bold, color = EmeraldPrimary)
+                                },
                                 leadingIcon = {
-                                    Icon(Icons.Default.Email, contentDescription = null)
+                                    Icon(Icons.Default.Phone, contentDescription = null, tint = EmeraldPrimary)
                                 },
                                 keyboardOptions = KeyboardOptions(
-                                    keyboardType = KeyboardType.Email,
+                                    keyboardType = KeyboardType.Phone,
                                     imeAction = ImeAction.Next
                                 ),
                                 keyboardActions = KeyboardActions(
@@ -384,7 +423,7 @@ fun AuthScreen(
                                 singleLine = true,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .testTag("signup_email_input"),
+                                    .testTag("signup_phone_input"),
                                 shape = RoundedCornerShape(12.dp)
                             )
 
@@ -452,13 +491,39 @@ fun AuthScreen(
                                 shape = RoundedCornerShape(12.dp)
                             )
 
-                            Spacer(modifier = Modifier.height(20.dp))
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Default.Security,
+                                        contentDescription = null,
+                                        tint = EmeraldPrimary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = "SMS OTP code will be sent to +91 ${mobileInput.ifBlank { "..." }}. KYC documents upload unlocks after verification.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(18.dp))
 
                             Button(
                                 onClick = {
                                     focusManager.clearFocus()
-                                    if (emailInput.isBlank() || !emailInput.contains("@")) {
-                                        viewModel.showMessage("Please enter a valid email address")
+                                    if (mobileInput.length != 10) {
+                                        viewModel.showMessage("Please enter a valid 10-digit mobile number")
                                         return@Button
                                     }
                                     if (passwordInput.length < 6) {
@@ -469,7 +534,7 @@ fun AuthScreen(
                                         viewModel.showMessage("Passwords do not match")
                                         return@Button
                                     }
-                                    viewModel.signUpWithEmail(emailInput, passwordInput) { success ->
+                                    viewModel.signUpWithPhone(mobileInput, passwordInput) { success ->
                                         if (success) {
                                             activeTab = AuthTab.VERIFY_OTP
                                             resendCooldown = 45
@@ -491,40 +556,77 @@ fun AuthScreen(
                                         strokeWidth = 2.5.dp
                                     )
                                 } else {
-                                    Icon(Icons.Default.PersonAdd, contentDescription = null)
+                                    Icon(Icons.Default.Sms, contentDescription = null)
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("CREATE ACCOUNT & SEND OTP", fontWeight = FontWeight.Bold)
+                                    Text("SEND SMS OTP & VERIFY", fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
 
                         AuthTab.VERIFY_OTP -> {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = EmeraldPrimary.copy(alpha = 0.12f)
+                            ) {
+                                Text(
+                                    text = "STEP 2: OTP VERIFICATION",
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        color = EmeraldPrimary
+                                    )
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
                             Text(
-                                text = "Verify Email OTP",
+                                text = "Verify Mobile OTP",
                                 style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
                             )
                             Text(
-                                text = "Enter the 6-digit confirmation code sent to:",
+                                text = "Enter the 6-digit SMS verification code sent to:",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            Text(
-                                text = emailInput,
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = EmeraldPrimary
-                                )
-                            )
 
-                            Spacer(modifier = Modifier.height(20.dp))
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = EmeraldPrimary.copy(alpha = 0.1f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Default.PhoneAndroid,
+                                        contentDescription = null,
+                                        tint = EmeraldPrimary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "+91 $mobileInput",
+                                        style = MaterialTheme.typography.titleMedium.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            color = EmeraldPrimary
+                                        )
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(18.dp))
 
                             OutlinedTextField(
                                 value = otpInput,
-                                onValueChange = { otpInput = it.take(6) },
-                                label = { Text("6-Digit OTP Code") },
+                                onValueChange = { otpInput = it.filter { ch -> ch.isDigit() }.take(6) },
+                                label = { Text("6-Digit SMS Code") },
                                 placeholder = { Text("123456") },
                                 leadingIcon = {
-                                    Icon(Icons.Default.Key, contentDescription = null)
+                                    Icon(Icons.Default.Key, contentDescription = null, tint = EmeraldPrimary)
                                 },
                                 keyboardOptions = KeyboardOptions(
                                     keyboardType = KeyboardType.NumberPassword,
@@ -533,14 +635,14 @@ fun AuthScreen(
                                 keyboardActions = KeyboardActions(
                                     onDone = {
                                         if (otpInput.isNotBlank()) {
-                                            viewModel.verifyEmailOtp(emailInput, otpInput)
+                                            viewModel.verifyPhoneOtp(mobileInput, otpInput)
                                         }
                                     }
                                 ),
                                 singleLine = true,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .testTag("email_otp_input_field"),
+                                    .testTag("phone_otp_input_field"),
                                 shape = RoundedCornerShape(12.dp)
                             )
 
@@ -554,7 +656,7 @@ fun AuthScreen(
                                 TextButton(
                                     onClick = { activeTab = AuthTab.SIGNUP }
                                 ) {
-                                    Text("Change Email", style = MaterialTheme.typography.labelSmall)
+                                    Text("Change Number", style = MaterialTheme.typography.labelSmall)
                                 }
 
                                 if (resendCooldown > 0) {
@@ -566,13 +668,13 @@ fun AuthScreen(
                                 } else {
                                     TextButton(
                                         onClick = {
-                                            viewModel.resendEmailOtp(emailInput)
+                                            viewModel.resendPhoneOtp(mobileInput)
                                             resendCooldown = 45
                                         },
-                                        modifier = Modifier.testTag("resend_email_otp_button")
+                                        modifier = Modifier.testTag("resend_phone_otp_button")
                                     ) {
                                         Text(
-                                            text = "Resend OTP",
+                                            text = "Resend SMS OTP",
                                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                                             color = EmeraldPrimary
                                         )
@@ -586,15 +688,15 @@ fun AuthScreen(
                                 onClick = {
                                     focusManager.clearFocus()
                                     if (otpInput.isBlank()) {
-                                        viewModel.showMessage("Please enter the 6-digit OTP code")
+                                        viewModel.showMessage("Please enter the 6-digit SMS OTP code")
                                         return@Button
                                     }
-                                    viewModel.verifyEmailOtp(emailInput, otpInput)
+                                    viewModel.verifyPhoneOtp(mobileInput, otpInput)
                                 },
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(50.dp)
-                                    .testTag("verify_email_otp_button"),
+                                    .testTag("verify_phone_otp_button"),
                                 shape = RoundedCornerShape(12.dp),
                                 enabled = !isActionLoading && otpInput.isNotEmpty(),
                                 colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
@@ -608,7 +710,7 @@ fun AuthScreen(
                                 } else {
                                     Icon(Icons.Default.VerifiedUser, contentDescription = null)
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("VERIFY & CONTINUE", fontWeight = FontWeight.Bold)
+                                    Text("VERIFY OTP & PROCEED TO KYC", fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -624,23 +726,33 @@ fun AuthScreen(
 
     // Forgot Password Dialog
     if (showForgotPasswordDialog) {
-        var forgotEmail by remember { mutableStateOf(emailInput) }
+        var forgotMobile by remember { mutableStateOf(mobileInput) }
         AlertDialog(
             onDismissRequest = { showForgotPasswordDialog = false },
             title = { Text("Reset Password") },
             text = {
                 Column {
                     Text(
-                        text = "Enter your registered email address to receive password reset instructions.",
+                        text = "Enter your registered 10-digit mobile number to receive an SMS verification code to reset your password.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     OutlinedTextField(
-                        value = forgotEmail,
-                        onValueChange = { forgotEmail = it },
-                        label = { Text("Email Address") },
+                        value = forgotMobile,
+                        onValueChange = { input ->
+                            val digits = input.filter { it.isDigit() }
+                            forgotMobile = if (digits.startsWith("91") && digits.length > 10) {
+                                digits.drop(2).take(10)
+                            } else {
+                                digits.take(10)
+                            }
+                        },
+                        label = { Text("Mobile Number (10 digits)") },
+                        prefix = { Text("+91 ", fontWeight = FontWeight.Bold, color = EmeraldPrimary) },
+                        leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null, tint = EmeraldPrimary) },
                         singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -648,14 +760,16 @@ fun AuthScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        if (forgotEmail.isNotBlank()) {
-                            viewModel.forgotPassword(forgotEmail)
+                        if (forgotMobile.length == 10) {
+                            viewModel.requestPhoneOtp(forgotMobile)
                             showForgotPasswordDialog = false
+                        } else {
+                            viewModel.showMessage("Please enter a valid 10-digit mobile number")
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
                 ) {
-                    Text("Send Reset Link")
+                    Text("Send SMS Code")
                 }
             },
             dismissButton = {

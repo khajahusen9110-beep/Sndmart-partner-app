@@ -12,6 +12,9 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+
     <application
         android:name=".SndmartApplication"
         android:allowBackup="true"
@@ -28,13 +31,10 @@
             android:name="com.google.android.geo.API_KEY"
             android:value="${GOOGLE_MAPS_API_KEY}" />
 
-        <!-- Disable automatic Firebase Cloud Messaging registration to prevent hard failure exceptions on emulators -->
+        <!-- Firebase Cloud Messaging configuration for newsndmart project -->
         <meta-data
             android:name="firebase_messaging_auto_init_enabled"
-            android:value="false" />
-        <meta-data
-            android:name="firebase_analytics_collection_enabled"
-            android:value="false" />
+            android:value="true" />
 
         <activity
             android:name=".MainActivity"
@@ -59,7 +59,7 @@
             android:theme="@style/Theme.MyApplication" />
 
         <service
-            android:name=".service.SndmartFirebaseMessagingService"
+            android:name=".service.DeliveryPartnerFcmService"
             android:exported="false">
             <intent-filter>
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />

@@ -25,11 +25,12 @@ class SndmartApplication : Application() {
                 Log.d(TAG, "Firebase already initialized")
             }
 
-            // Always keep auto-init disabled to prevent hard failure exceptions
-            // on emulators and unconfigured environments. Tokens are fetched safely on demand.
+            // Enable Firebase Cloud Messaging auto-init with official project configuration
             try {
-                com.google.firebase.messaging.FirebaseMessaging.getInstance().isAutoInitEnabled = false
-            } catch (ignored: Exception) {
+                com.google.firebase.messaging.FirebaseMessaging.getInstance().isAutoInitEnabled = true
+                Log.d(TAG, "FirebaseMessaging auto-init enabled for newsndmart project")
+            } catch (e: Exception) {
+                Log.w(TAG, "FirebaseMessaging auto-init warning: ${e.message}")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Firebase initialization error: ${e.message}", e)
@@ -43,29 +44,30 @@ class SndmartApplication : Application() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-            // Channel 1: Incoming Delivery Orders (High importance + Ringtone + Vibration + Lockscreen visibility)
             val ringtoneSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+                ?: android.provider.Settings.System.DEFAULT_RINGTONE_URI
             val audioAttributes = AudioAttributes.Builder()
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                 .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
                 .build()
 
-            val orderChannel = NotificationChannel(
-                SndmartFirebaseMessagingService.CHANNEL_INCOMING_ORDERS,
-                "Incoming Delivery Orders",
+            // Channel 1: New Delivery Alerts (Step 4 specification)
+            val newAlertsChannel = NotificationChannel(
+                "new_delivery_alerts",
+                "New Delivery Alerts",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Urgent full-screen alerts for newly assigned deliveries"
-                setSound(ringtoneSoundUri, audioAttributes)
+                description = "Urgent full-screen dispatch alerts for assigned delivery orders"
                 enableVibration(true)
-                vibrationPattern = longArrayOf(0, 500, 250, 500, 250, 500)
+                vibrationPattern = longArrayOf(0, 800, 400, 800, 400, 800)
+                setSound(ringtoneSoundUri, audioAttributes)
                 lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
             }
-            notificationManager.createNotificationChannel(orderChannel)
+            notificationManager.createNotificationChannel(newAlertsChannel)
 
             // Channel 2: Delivery Updates & Payouts (Default priority)
             val updateChannel = NotificationChannel(
-                SndmartFirebaseMessagingService.CHANNEL_DELIVERY_UPDATES,
+                "delivery_updates",
                 "Delivery Updates & Payouts",
                 NotificationManager.IMPORTANCE_DEFAULT
             ).apply {

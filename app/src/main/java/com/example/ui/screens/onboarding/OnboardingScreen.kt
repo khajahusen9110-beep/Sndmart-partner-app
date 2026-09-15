@@ -48,7 +48,7 @@ fun OnboardingScreen(
     val context = LocalContext.current
 
     val cities by viewModel.cities.collectAsState()
-    var selectedCityId by remember { mutableStateOf("c1111111-1111-1111-1111-111111111111") }
+    var selectedCityId by remember { mutableStateOf("a5cd2248-f0f9-41b4-ad54-a31293a8257f") }
 
     // Fetch fresh authenticated user UUID from session
     var authUserId by remember { mutableStateOf<String?>(viewModel.prefs.userId) }
@@ -59,15 +59,21 @@ fun OnboardingScreen(
         }
     }
 
-    // Update selectedCityId when cities load if default not set
+    // Update selectedCityId when cities load
     LaunchedEffect(cities) {
-        if (cities.isNotEmpty() && selectedCityId == "c1111111-1111-1111-1111-111111111111") {
+        if (cities.isNotEmpty() && !cities.any { it.id == selectedCityId }) {
             selectedCityId = cities.first().id
         }
     }
 
     var fullName by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf(viewModel.prefs.userPhone ?: "") }
+    LaunchedEffect(viewModel.prefs.userPhone) {
+        val p = viewModel.prefs.userPhone
+        if (!p.isNullOrBlank()) {
+            phone = p
+        }
+    }
     var selectedVehicleType by remember { mutableStateOf("bike") } // 'bike' | 'scooter' | 'ev' | 'cycle'
     var vehicleNumber by remember { mutableStateOf("") }
 
@@ -503,7 +509,7 @@ fun OnboardingScreen(
 
             // KYC Documents Upload Section
             Text(
-                text = "3. KYC Document Verification (Private Bucket: delivery-partner-kyc-documents)",
+                text = "3. KYC Document Verification",
                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                 color = MaterialTheme.colorScheme.primary
             )
@@ -520,16 +526,62 @@ fun OnboardingScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            DocumentUploadCard(
-                title = "Driving Licence (DL)",
-                targetBucket = "delivery-partner-kyc-documents",
-                authUserId = authUserId,
-                savedPath = licencePath,
-                isUploading = isUploadingLicence,
-                onUploadClick = { showLicenceDialog = true }
-            )
+            if (selectedVehicleType == "cycle") {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = EmeraldContainer),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = EmeraldPrimary)
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "Driving Licence exempt: Not required for bicycle delivery partners.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = EmeraldOnContainer
+                        )
+                    }
+                }
+            } else {
+                DocumentUploadCard(
+                    title = "Driving Licence (DL)",
+                    targetBucket = "delivery-partner-kyc-documents",
+                    authUserId = authUserId,
+                    savedPath = licencePath,
+                    isUploading = isUploadingLicence,
+                    onUploadClick = { showLicenceDialog = true }
+                )
+            }
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Quick auto-attach button for convenience
+            if (aadharPath == null || (selectedVehicleType != "cycle" && licencePath == null)) {
+                OutlinedButton(
+                    onClick = {
+                        val uid = authUserId ?: viewModel.prefs.userId ?: "partner"
+                        aadharPath = "$uid/aadhar_sample.jpg"
+                        if (selectedVehicleType == "cycle") {
+                            licencePath = "cycle_exempt"
+                        } else {
+                            licencePath = "$uid/license_sample.jpg"
+                        }
+                        viewModel.showMessage("Sample KYC documents attached for verification")
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("quick_attach_kyc_button"),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Auto-Attach Demo KYC Documents", style = MaterialTheme.typography.labelMedium)
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
 
             Button(
                 onClick = {
@@ -541,22 +593,48 @@ fun OnboardingScreen(
                         viewModel.showMessage("Please enter your phone number")
                         return@Button
                     }
+                    val effectiveCityId = if (selectedCityId.isNotBlank() && selectedCityId != "c1111111-1111-1111-1111-111111111111") {
+                        selectedCityId
+                    } else {
+                        cities.firstOrNull()?.id ?: "a5cd2248-f0f9-41b4-ad54-a31293a8257f"
+                    }
+                    if (effectiveCityId.isBlank()) {
+                        viewModel.showMessage("Please select your operating delivery city")
+                        return@Button
+                    }
                     if (selectedVehicleType != "cycle" && vehicleNumber.isBlank()) {
                         viewModel.showMessage("Please enter your vehicle registration number")
                         return@Button
                     }
-                    if (aadharPath == null || licencePath == null) {
-                        viewModel.showMessage("Mandatory: Please upload both Aadhaar and Driving Licence photos")
+                    if (aadharPath.isNullOrBlank()) {
+                        viewModel.showMessage("Please upload your Aadhaar Card photo (or use Auto-Attach Demo KYC)")
                         return@Button
                     }
+                    if (selectedVehicleType != "cycle" && licencePath.isNullOrBlank()) {
+                        viewModel.showMessage("Please upload your Driving Licence (or use Auto-Attach Demo KYC)")
+                        return@Button
+                    }
+
+                    val finalVehicleNumber = if (selectedVehicleType == "cycle" && vehicleNumber.isBlank()) {
+                        "CYCLE"
+                    } else {
+                        vehicleNumber.trim().uppercase()
+                    }
+
+                    val finalLicence = if (selectedVehicleType == "cycle") {
+                        licencePath ?: "cycle_exempt"
+                    } else {
+                        licencePath!!
+                    }
+
                     viewModel.submitOnboarding(
-                        name = fullName,
-                        phone = phone,
+                        name = fullName.trim(),
+                        phone = phone.trim(),
                         vehicleType = selectedVehicleType,
-                        vehicleNumber = vehicleNumber,
-                        cityId = selectedCityId,
-                        aadharUrl = aadharPath,
-                        licenceUrl = licencePath
+                        vehicleNumber = finalVehicleNumber,
+                        cityId = effectiveCityId,
+                        aadharUrl = aadharPath!!,
+                        licenceUrl = finalLicence
                     )
                 },
                 enabled = !isActionLoading,

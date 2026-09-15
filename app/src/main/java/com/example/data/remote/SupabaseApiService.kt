@@ -19,6 +19,12 @@ interface SupabaseApiService {
 
     // Auth endpoints
     @POST("auth/v1/signup")
+    suspend fun signUp(
+        @Header("apikey") apiKey: String,
+        @Body body: Map<String, String>
+    ): Response<ResponseBody>
+
+    @POST("auth/v1/signup")
     suspend fun signUpWithEmail(
         @Header("apikey") apiKey: String,
         @Body body: Map<String, String>
@@ -97,7 +103,7 @@ interface SupabaseApiService {
         @Header("Authorization") bearerToken: String,
         @Header("Prefer") prefer: String = "return=representation",
         @Body partnerData: Map<String, Any?>
-    ): Response<List<DeliveryPartner>>
+    ): Response<ResponseBody>
 
     @PATCH("rest/v1/delivery_partners")
     suspend fun updateDeliveryPartnerByUserId(
@@ -113,16 +119,82 @@ interface SupabaseApiService {
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("delivery_partner_id") partnerIdFilter: String,
-        @Query("select") select: String = "*",
-        @Query("order") order: String = "created_at.desc"
+        @Query("select") select: String = "id,order_id,delivery_partner_id,status,assigned_at,accepted_at,picked_up_at,delivered_at,pickup_photo_url,delivered_photo_url,delivery_otp,expires_at,batch_id,estimated_delivery_minutes,estimated_delivery_at,orders(id,order_number,total_amount,delivery_fee,payment_method,vendor_id,address_id,city_id,vendors(id,name,latitude,longitude,address,phone),customer_addresses(id,lat,lng,recipient_name,phone,address_line,landmark))",
+        @Query("order") order: String = "created_at.desc",
+        @Query("limit") limit: Int = 20,
+        @Query("offset") offset: Int = 0
     ): Response<List<DeliveryAssignment>>
+
+    @GET("rest/v1/orders")
+    suspend fun getOrderById(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Query("id") idFilter: String,
+        @Query("select") select: String = "id,order_number,vendor_id,address_id,city_id,total_amount,delivery_fee,payment_method,vendors(id,name,latitude,longitude,address,phone),customer_addresses(id,lat,lng,recipient_name,phone,address_line,landmark,city,pincode),cities(id,name,center_lat,center_lng)"
+    ): Response<List<OrderDbModel>>
+
+    @GET("rest/v1/orders")
+    suspend fun getOrdersByIds(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Query("id") inFilter: String,
+        @Query("select") select: String = "id,order_number,vendor_id,address_id,city_id,total_amount,delivery_fee,payment_method,vendors(id,name,latitude,longitude,address,phone),customer_addresses(id,lat,lng,recipient_name,phone,address_line,landmark,city,pincode),cities(id,name,center_lat,center_lng)"
+    ): Response<List<OrderDbModel>>
+
+    @GET("rest/v1/orders")
+    suspend fun getOrderByOrderNumber(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Query("order_number") orderNumberFilter: String,
+        @Query("select") select: String = "id,order_number,vendor_id,address_id,city_id,total_amount,delivery_fee,payment_method,vendors(id,name,latitude,longitude,address,phone),customer_addresses(id,lat,lng,recipient_name,phone,address_line,landmark,city,pincode),cities(id,name,center_lat,center_lng)"
+    ): Response<List<OrderDbModel>>
+
+    @GET("rest/v1/order_items")
+    suspend fun getOrderItems(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Query("order_id") orderIdFilter: String,
+        @Query("select") select: String = "id,order_id,product_name,variant_label,quantity,unit_price,total_price"
+    ): Response<List<OrderItem>>
+
+    @GET("rest/v1/customer_addresses")
+    suspend fun getCustomerAddressById(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Query("id") idFilter: String,
+        @Query("select") select: String = "id,user_id,lat,lng,recipient_name,phone,address_line,landmark,city,pincode"
+    ): Response<List<CustomerAddressDbModel>>
+
+    @GET("rest/v1/vendors")
+    suspend fun getVendorById(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Query("id") idFilter: String,
+        @Query("select") select: String = "id,name,latitude,longitude,address,phone"
+    ): Response<List<VendorDbModel>>
+
+    @GET("rest/v1/vendors")
+    suspend fun getVendorsByIds(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Query("id") inFilter: String,
+        @Query("select") select: String = "id,name,latitude,longitude,address,phone"
+    ): Response<List<VendorDbModel>>
+
+    @GET("rest/v1/cities")
+    suspend fun getCityById(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Query("id") idFilter: String,
+        @Query("select") select: String = "id,name,center_lat,center_lng"
+    ): Response<List<CityDbModel>>
 
     @GET("rest/v1/delivery_partner_bank_details")
     suspend fun getBankDetails(
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("delivery_partner_id") partnerIdFilter: String,
-        @Query("select") select: String = "*"
+        @Query("select") select: String = "id,delivery_partner_id,account_holder_name,account_number,ifsc_code,bank_name,upi_id,is_verified"
     ): Response<List<DeliveryPartnerBankDetails>>
 
     @GET("rest/v1/delivery_partner_earnings")
@@ -130,8 +202,10 @@ interface SupabaseApiService {
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("delivery_partner_id") partnerIdFilter: String,
-        @Query("select") select: String = "*",
-        @Query("order") order: String = "created_at.desc"
+        @Query("select") select: String = "id,delivery_partner_id,order_id,delivery_fee,incentive,penalty,net_earning,status,paid_at,created_at",
+        @Query("order") order: String = "created_at.desc",
+        @Query("limit") limit: Int = 20,
+        @Query("offset") offset: Int = 0
     ): Response<List<DeliveryEarning>>
 
     @GET("rest/v1/delivery_partner_payment_requests")
@@ -139,8 +213,10 @@ interface SupabaseApiService {
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("delivery_partner_id") partnerIdFilter: String,
-        @Query("select") select: String = "*",
-        @Query("order") order: String = "requested_at.desc"
+        @Query("select") select: String = "id,delivery_partner_id,amount,status,note,created_at,paid_at",
+        @Query("order") order: String = "created_at.desc",
+        @Query("limit") limit: Int = 20,
+        @Query("offset") offset: Int = 0
     ): Response<List<PaymentRequest>>
 
     @POST("rest/v1/delivery_partner_cash_ledger")
@@ -150,12 +226,31 @@ interface SupabaseApiService {
         @Body entry: Map<String, Any?>
     ): Response<ResponseBody>
 
+    @PATCH("rest/v1/profiles")
+    suspend fun updateProfile(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Query("id") idFilter: String,
+        @Body body: Map<String, Any?>
+    ): Response<ResponseBody>
+
+    @GET("rest/v1/profiles")
+    suspend fun getProfile(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Query("id") idFilter: String,
+        @Query("select") select: String = "*"
+    ): Response<ResponseBody>
+
     @GET("rest/v1/delivery_partner_cash_ledger")
     suspend fun getCashLedger(
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("delivery_partner_id") partnerIdFilter: String,
-        @Query("order") order: String = "created_at.desc"
+        @Query("select") select: String = "id,delivery_partner_id,order_id,entry_type,amount,status,note,created_at,orders(order_number)",
+        @Query("order") order: String = "created_at.desc",
+        @Query("limit") limit: Int = 20,
+        @Query("offset") offset: Int = 0
     ): Response<List<CashLedgerEntry>>
 
     @GET("rest/v1/delivery_partner_reviews")
@@ -163,8 +258,10 @@ interface SupabaseApiService {
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("delivery_partner_id") partnerIdFilter: String,
-        @Query("select") select: String = "*",
-        @Query("order") order: String = "created_at.desc"
+        @Query("select") select: String = "id,delivery_partner_id,customer_id,order_id,rating,comment,created_at,profiles!delivery_partner_reviews_customer_id_fkey(full_name)",
+        @Query("order") order: String = "created_at.desc",
+        @Query("limit") limit: Int = 20,
+        @Query("offset") offset: Int = 0
     ): Response<List<DeliveryPartnerReview>>
 
     @GET("rest/v1/notifications")
@@ -172,9 +269,11 @@ interface SupabaseApiService {
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("user_id") userIdFilter: String,
-        @Query("select") select: String = "*",
-        @Query("order") order: String = "created_at.desc"
-    ): Response<List<InAppNotification>>
+        @Query("select") select: String = "id,user_id,title,body,data,is_read,created_at",
+        @Query("order") order: String = "created_at.desc",
+        @Query("limit") limit: Int = 20,
+        @Query("offset") offset: Int = 0
+    ): Response<ResponseBody>
 
     @PATCH("rest/v1/notifications")
     suspend fun markNotificationRead(
@@ -183,6 +282,24 @@ interface SupabaseApiService {
         @Query("id") idFilter: String,
         @Query("user_id") userIdFilter: String,
         @Body body: Map<String, Boolean>
+    ): Response<ResponseBody>
+
+    @GET("rest/v1/app_versions")
+    suspend fun getAppVersions(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Query("platform") platformFilter: String = "eq.delivery_partner_app",
+        @Query("select") select: String = "*",
+        @Query("limit") limit: Int = 1
+    ): Response<ResponseBody>
+
+    @GET("rest/v1/app_settings")
+    suspend fun getAppSetting(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Query("key") keyFilter: String = "eq.maintenance_mode",
+        @Query("select") select: String = "value",
+        @Query("limit") limit: Int = 1
     ): Response<ResponseBody>
 
     // =========================================================================
@@ -313,12 +430,38 @@ interface SupabaseApiService {
         @Body tokenData: Map<String, Any?>
     ): Response<ResponseBody>
 
+    @GET("rest/v1/device_tokens")
+    suspend fun getDeviceToken(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Query("user_id") userIdFilter: String,
+        @Query("user_type") userTypeFilter: String = "eq.delivery_partner",
+        @Query("select") select: String = "user_id,user_type,fcm_token,active,firebase_project"
+    ): Response<ResponseBody>
+
+    @PATCH("rest/v1/device_tokens")
+    suspend fun updateDeviceToken(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Query("user_id") userIdFilter: String,
+        @Query("user_type") userTypeFilter: String = "eq.delivery_partner",
+        @Body tokenData: Map<String, Any?>
+    ): Response<ResponseBody>
+
     // Direct table operations per backend spec
     @PATCH("rest/v1/delivery_assignments")
     suspend fun updateAssignment(
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("id") idFilter: String,
+        @Body data: Map<String, Any?>
+    ): Response<ResponseBody>
+
+    @PATCH("rest/v1/delivery_assignments")
+    suspend fun updateAssignmentByFilter(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Query("or") orFilter: String,
         @Body data: Map<String, Any?>
     ): Response<ResponseBody>
 

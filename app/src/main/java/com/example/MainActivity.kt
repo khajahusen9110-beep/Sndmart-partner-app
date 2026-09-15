@@ -1,6 +1,7 @@
 package com.example
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -29,6 +30,7 @@ import com.example.ui.AuthUiState
 import com.example.ui.MainViewModel
 import com.example.ui.components.AssignmentAlertModal
 import com.example.ui.components.DeliveryTopAppBar
+import com.example.ui.components.MaintenanceBanner
 import com.example.ui.screens.auth.AuthScreen
 import com.example.ui.screens.dashboard.DashboardScreen
 import com.example.ui.screens.delivery.ActiveDeliveryDetailScreen
@@ -38,6 +40,7 @@ import com.example.ui.screens.notifications.NotificationsBottomSheet
 import com.example.ui.screens.onboarding.OnboardingScreen
 import com.example.ui.screens.onboarding.ReviewStatusScreen
 import com.example.ui.screens.profile.ProfileScreen
+import com.example.ui.screens.update.BlockingUpdateScreen
 import com.example.ui.theme.EmeraldPrimary
 import com.example.ui.theme.MyApplicationTheme
 
@@ -54,11 +57,25 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        handleNavigateIntent(intent)
 
         setContent {
             MyApplicationTheme {
                 MainAppRoot(viewModel = viewModel)
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleNavigateIntent(intent)
+    }
+
+    private fun handleNavigateIntent(intent: Intent?) {
+        val assignmentId = intent?.getStringExtra("EXTRA_NAVIGATE_ASSIGNMENT_ID")
+        if (!assignmentId.isNullOrBlank()) {
+            viewModel.selectAssignmentById(assignmentId)
         }
     }
 
@@ -78,6 +95,10 @@ fun MainAppRoot(viewModel: MainViewModel) {
     val notifications by viewModel.notifications.collectAsState()
     val dataFetchError by viewModel.dataFetchError.collectAsState()
     val isDataLoading by viewModel.isDataLoading.collectAsState()
+    val isUpdateRequired by viewModel.isUpdateRequired.collectAsState()
+    val blockingUpdateInfo by viewModel.blockingUpdateInfo.collectAsState()
+    val maintenanceModeActive by viewModel.maintenanceModeActive.collectAsState()
+    val maintenanceMessage by viewModel.maintenanceMessage.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
     var showNotificationsSheet by remember { mutableStateOf(false) }
@@ -113,6 +134,14 @@ fun MainAppRoot(viewModel: MainViewModel) {
             snackbarHostState.showSnackbar(it)
             viewModel.clearUserMessage()
         }
+    }
+
+    if (isUpdateRequired) {
+        BlockingUpdateScreen(
+            updateInfo = blockingUpdateInfo,
+            onCheckAgain = { viewModel.runStartupChecks() }
+        )
+        return
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -222,6 +251,17 @@ fun MainAppRoot(viewModel: MainViewModel) {
                                 .padding(innerPadding)
                         ) {
                             AnimatedVisibility(
+                                visible = maintenanceModeActive,
+                                enter = expandVertically() + fadeIn(),
+                                exit = shrinkVertically() + fadeOut()
+                            ) {
+                                MaintenanceBanner(
+                                    message = maintenanceMessage
+                                        ?: "New orders are temporarily paused platform-wide. You can still complete any deliveries already assigned to you."
+                                )
+                            }
+
+                            AnimatedVisibility(
                                 visible = dataFetchError != null,
                                 enter = expandVertically() + fadeIn(),
                                 exit = shrinkVertically() + fadeOut()
@@ -312,16 +352,14 @@ fun MainAppRoot(viewModel: MainViewModel) {
         }
 
         // Realtime Incoming Assignment Alert Modal
-        if (incomingAlert != null) {
+        incomingAlert?.let { alert ->
             AssignmentAlertModal(
-                assignment = incomingAlert!!,
+                assignment = alert,
                 onAccept = {
-                    val targetId = incomingAlert!!.id
-                    viewModel.respondToAssignment(targetId, true)
+                    viewModel.acceptOrder(alert)
                 },
                 onReject = {
-                    val targetId = incomingAlert!!.id
-                    viewModel.respondToAssignment(targetId, false)
+                    viewModel.rejectOrder(alert.id)
                 }
             )
         }

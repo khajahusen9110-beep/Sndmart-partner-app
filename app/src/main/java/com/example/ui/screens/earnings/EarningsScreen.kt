@@ -151,7 +151,7 @@ fun EarningsScreen(
                         item {
                             EmptyDeliveriesState(
                                 title = "No Earnings Recorded Yet",
-                                subtitle = "Complete your assigned deliveries to see fees, surge bonuses, and tips appear here.",
+                                subtitle = "Complete your assigned deliveries to see delivery fees and surge incentives appear here.",
                                 onRefresh = { viewModel.refreshAllData() }
                             )
                         }
@@ -430,19 +430,22 @@ fun PaymentRequestCard(request: PaymentRequest) {
         ) {
             Column {
                 Text(text = "₹${request.amount.toInt()} Payout", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
-                Text(text = "${request.accountSummary ?: request.payoutMethod.uppercase()} • ${request.requestedAt}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val timeLabel = request.paidAt?.let { "Paid: $it" } ?: request.requestedAt.ifBlank { request.createdAt }
+                val subText = if (!request.note.isNullOrBlank()) "${request.note} • $timeLabel" else timeLabel
+                Text(text = subText, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
+            val isSuccess = request.status in listOf("paid", "processed", "approved")
             StatusPill(
                 text = request.status,
-                statusColor = when (request.status) {
-                    "processed" -> StatusOnlineGreen
-                    "rejected" -> StatusRejectedRed
+                statusColor = when {
+                    isSuccess -> StatusOnlineGreen
+                    request.status == "rejected" -> StatusRejectedRed
                     else -> AmberAccent
                 },
-                bgColor = when (request.status) {
-                    "processed" -> EmeraldContainer
-                    "rejected" -> Color(0xFFFEE2E2)
+                bgColor = when {
+                    isSuccess -> EmeraldContainer
+                    request.status == "rejected" -> Color(0xFFFEE2E2)
                     else -> AmberContainer
                 }
             )

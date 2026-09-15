@@ -155,7 +155,7 @@ fun DashboardScreen(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             OutlinedButton(
-                                onClick = { viewModel.respondToAssignment(alert.id, false) },
+                                onClick = { viewModel.rejectOrder(alert.id) },
                                 modifier = Modifier.weight(1f),
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Slate900),
                                 border = androidx.compose.foundation.BorderStroke(1.dp, Slate900.copy(alpha = 0.5f)),
@@ -165,7 +165,7 @@ fun DashboardScreen(
                             }
 
                             Button(
-                                onClick = { viewModel.respondToAssignment(alert.id, true) },
+                                onClick = { viewModel.acceptOrder(alert) },
                                 modifier = Modifier.weight(1.5f),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = Slate900,
