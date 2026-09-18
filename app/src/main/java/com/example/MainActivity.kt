@@ -28,7 +28,6 @@ import androidx.core.content.ContextCompat
 import com.example.data.model.DeliveryAssignment
 import com.example.ui.AuthUiState
 import com.example.ui.MainViewModel
-import com.example.ui.components.AssignmentAlertModal
 import com.example.ui.components.DeliveryTopAppBar
 import com.example.ui.components.MaintenanceBanner
 import com.example.ui.screens.auth.AuthScreen
@@ -73,9 +72,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleNavigateIntent(intent: Intent?) {
-        val assignmentId = intent?.getStringExtra("EXTRA_NAVIGATE_ASSIGNMENT_ID")
+        val assignmentId = intent?.getStringExtra("assignment_id")
+            ?: intent?.getStringExtra("assignmentId")
+            ?: intent?.getStringExtra("EXTRA_NAVIGATE_ASSIGNMENT_ID")
+            ?: intent?.getStringExtra("order_id")
+            ?: intent?.getStringExtra("orderId")
         if (!assignmentId.isNullOrBlank()) {
-            viewModel.selectAssignmentById(assignmentId)
+            viewModel.handleIncomingNotificationClick(assignmentId)
         }
     }
 
@@ -349,19 +352,6 @@ fun MainAppRoot(viewModel: MainViewModel) {
                     }
                 }
             }
-        }
-
-        // Realtime Incoming Assignment Alert Modal
-        incomingAlert?.let { alert ->
-            AssignmentAlertModal(
-                assignment = alert,
-                onAccept = {
-                    viewModel.acceptOrder(alert)
-                },
-                onReject = {
-                    viewModel.rejectOrder(alert.id)
-                }
-            )
         }
 
         // Notifications Bottom Sheet

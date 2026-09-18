@@ -78,6 +78,7 @@ interface SupabaseApiService {
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("select") select: String = "id,name",
+        @Query("status") status: String = "eq.active",
         @Query("order") order: String = "name.asc"
     ): Response<List<City>>
 
@@ -102,7 +103,7 @@ interface SupabaseApiService {
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Header("Prefer") prefer: String = "return=representation",
-        @Body partnerData: Map<String, Any?>
+        @Body partnerData: Map<String, @JvmSuppressWildcards Any?>
     ): Response<ResponseBody>
 
     @PATCH("rest/v1/delivery_partners")
@@ -111,7 +112,7 @@ interface SupabaseApiService {
         @Header("Authorization") bearerToken: String,
         @Header("Prefer") prefer: String = "return=representation",
         @Query("user_id") userIdFilter: String,
-        @Body partnerData: Map<String, Any?>
+        @Body partnerData: Map<String, @JvmSuppressWildcards Any?>
     ): Response<ResponseBody>
 
     @GET("rest/v1/delivery_assignments")
@@ -194,7 +195,7 @@ interface SupabaseApiService {
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("delivery_partner_id") partnerIdFilter: String,
-        @Query("select") select: String = "id,delivery_partner_id,account_holder_name,account_number,ifsc_code,bank_name,upi_id,is_verified"
+        @Query("select") select: String = "id,delivery_partner_id,payout_method,account_holder_name,account_number,ifsc_code,bank_name,upi_id,is_verified"
     ): Response<List<DeliveryPartnerBankDetails>>
 
     @GET("rest/v1/delivery_partner_earnings")
@@ -223,7 +224,7 @@ interface SupabaseApiService {
     suspend fun insertCashLedger(
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
-        @Body entry: Map<String, Any?>
+        @Body entry: Map<String, @JvmSuppressWildcards Any?>
     ): Response<ResponseBody>
 
     @PATCH("rest/v1/profiles")
@@ -231,7 +232,7 @@ interface SupabaseApiService {
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("id") idFilter: String,
-        @Body body: Map<String, Any?>
+        @Body body: Map<String, @JvmSuppressWildcards Any?>
     ): Response<ResponseBody>
 
     @GET("rest/v1/profiles")
@@ -316,7 +317,7 @@ interface SupabaseApiService {
     suspend fun rpcSetAvailability(
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
-        @Body params: Map<String, Any>
+        @Body params: Map<String, @JvmSuppressWildcards Any>
     ): Response<ResponseBody>
 
     @POST("rest/v1/rpc/delivery_partner_update_location")
@@ -337,7 +338,7 @@ interface SupabaseApiService {
     suspend fun rpcRespondAssignment(
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
-        @Body params: Map<String, Any>
+        @Body params: Map<String, @JvmSuppressWildcards Any>
     ): Response<ResponseBody>
 
     @POST("rest/v1/rpc/delivery_partner_pickup")
@@ -388,7 +389,7 @@ interface SupabaseApiService {
     suspend fun rpcRequestCashRemittance(
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
-        @Body params: Map<String, Any?>
+        @Body params: Map<String, @JvmSuppressWildcards Any?>
     ): Response<ResponseBody>
 
     @POST("rest/v1/rpc/get_delivery_partner_cash_balance")
@@ -427,7 +428,7 @@ interface SupabaseApiService {
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Header("Prefer") prefer: String = "resolution=merge-duplicates",
-        @Body tokenData: Map<String, Any?>
+        @Body tokenData: Map<String, @JvmSuppressWildcards Any?>
     ): Response<ResponseBody>
 
     @GET("rest/v1/device_tokens")
@@ -445,7 +446,7 @@ interface SupabaseApiService {
         @Header("Authorization") bearerToken: String,
         @Query("user_id") userIdFilter: String,
         @Query("user_type") userTypeFilter: String = "eq.delivery_partner",
-        @Body tokenData: Map<String, Any?>
+        @Body tokenData: Map<String, @JvmSuppressWildcards Any?>
     ): Response<ResponseBody>
 
     // Direct table operations per backend spec
@@ -454,7 +455,7 @@ interface SupabaseApiService {
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("id") idFilter: String,
-        @Body data: Map<String, Any?>
+        @Body data: Map<String, @JvmSuppressWildcards Any?>
     ): Response<ResponseBody>
 
     @PATCH("rest/v1/delivery_assignments")
@@ -462,21 +463,21 @@ interface SupabaseApiService {
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("or") orFilter: String,
-        @Body data: Map<String, Any?>
+        @Body data: Map<String, @JvmSuppressWildcards Any?>
     ): Response<ResponseBody>
 
     @POST("rest/v1/delivery_status_history")
     suspend fun insertStatusHistory(
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
-        @Body data: Map<String, Any?>
+        @Body data: Map<String, @JvmSuppressWildcards Any?>
     ): Response<ResponseBody>
 
     @POST("rest/v1/delivery_otp_attempts")
     suspend fun insertOtpAttempt(
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
-        @Body data: Map<String, Any?>
+        @Body data: Map<String, @JvmSuppressWildcards Any?>
     ): Response<ResponseBody>
 
     @PATCH("rest/v1/orders")
@@ -484,7 +485,7 @@ interface SupabaseApiService {
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("id") idFilter: String,
-        @Body data: Map<String, Any?>
+        @Body data: Map<String, @JvmSuppressWildcards Any?>
     ): Response<ResponseBody>
 
     @PATCH("rest/v1/delivery_partners")
@@ -493,7 +494,7 @@ interface SupabaseApiService {
         @Header("Authorization") bearerToken: String,
         @Header("Prefer") prefer: String = "return=representation",
         @Query("id") idFilter: String,
-        @Body partnerData: Map<String, Any?>
+        @Body partnerData: Map<String, @JvmSuppressWildcards Any?>
     ): Response<ResponseBody>
 
     @POST("rest/v1/delivery_partner_bank_details?on_conflict=delivery_partner_id")
@@ -501,13 +502,13 @@ interface SupabaseApiService {
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Header("Prefer") prefer: String = "resolution=merge-duplicates",
-        @Body details: Map<String, Any?>
+        @Body details: Map<String, @JvmSuppressWildcards Any?>
     ): Response<ResponseBody>
 
     @POST("rest/v1/delivery_partner_payment_requests")
     suspend fun insertPaymentRequest(
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
-        @Body request: Map<String, Any?>
+        @Body request: Map<String, @JvmSuppressWildcards Any?>
     ): Response<ResponseBody>
 }

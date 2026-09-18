@@ -57,10 +57,10 @@ class SndmartApplication : Application() {
                 "New Delivery Alerts",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Urgent full-screen dispatch alerts for assigned delivery orders"
+                description = "Urgent dispatch alerts for assigned delivery orders"
                 enableVibration(true)
                 vibrationPattern = longArrayOf(0, 800, 400, 800, 400, 800)
-                setSound(ringtoneSoundUri, audioAttributes)
+                setSound(null, null)
                 lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
             }
             notificationManager.createNotificationChannel(newAlertsChannel)

@@ -117,6 +117,12 @@ class SupabaseRepository(
     private val _incomingAssignmentAlert = MutableStateFlow<DeliveryAssignment?>(null)
     val incomingAssignmentAlert: StateFlow<DeliveryAssignment?> = _incomingAssignmentAlert.asStateFlow()
 
+    fun setIncomingAssignmentAlert(assignment: DeliveryAssignment) {
+        if (!isAssignmentHandled(assignment.id) && !isAssignmentExpired(assignment)) {
+            _incomingAssignmentAlert.value = assignment
+        }
+    }
+
     private val handledAssignmentIds = Collections.synchronizedSet(prefs.getHandledAssignmentIds().toMutableSet())
 
     fun isAssignmentHandled(id: String): Boolean = handledAssignmentIds.contains(id)
@@ -192,6 +198,9 @@ class SupabaseRepository(
 
     private val _paymentRequests = MutableStateFlow<List<PaymentRequest>>(emptyList())
     val paymentRequests: StateFlow<List<PaymentRequest>> = _paymentRequests.asStateFlow()
+
+    private val _bankDetails = MutableStateFlow<DeliveryPartnerBankDetails?>(null)
+    val bankDetails: StateFlow<DeliveryPartnerBankDetails?> = _bankDetails.asStateFlow()
 
     private val _notifications = MutableStateFlow<List<InAppNotification>>(emptyList())
     val notifications: StateFlow<List<InAppNotification>> = _notifications.asStateFlow()
@@ -887,7 +896,7 @@ class SupabaseRepository(
             val validCityId = if (cityId.isNotBlank() && cityId.matches(Regex("^[0-9a-fA-F-]{36}$")) && cityId != "c1111111-1111-1111-1111-111111111111") {
                 cityId
             } else {
-                "a5cd2248-f0f9-41b4-ad54-a31293a8257f" // Bangalore
+                cachedCities?.firstOrNull()?.id ?: "a5cd2248-f0f9-41b4-ad54-a31293a8257f" // Live city ID (Sindhanur)
             }
 
             val effectiveVehicleNumber = if (normalizedVehicle == "cycle" && vehicleNumber.isBlank()) {
@@ -1988,7 +1997,7 @@ class SupabaseRepository(
             Log.d("SupabaseRepo", "Cities fetch fallback: ${e.message}")
         }
         val defaultList = listOf(
-            City(id = "a5cd2248-f0f9-41b4-ad54-a31293a8257f", name = "Bangalore")
+            City(id = "a5cd2248-f0f9-41b4-ad54-a31293a8257f", name = "Sindhanur")
         )
         if (cachedCities.isNullOrEmpty()) {
             cachedCities = defaultList
@@ -2056,6 +2065,45 @@ class SupabaseRepository(
         }
     }
 
+    suspend fun getBankDetails(): Result<DeliveryPartnerBankDetails?> = withContext(Dispatchers.IO) {
+        try {
+            val partnerId = _currentPartner.value?.id ?: prefs.currentPartnerId ?: return@withContext Result.success(null)
+            val token = prefs.token ?: prefs.customSupabaseKey
+            val response = apiService.getBankDetails(
+                apiKey = prefs.customSupabaseKey,
+                bearerToken = "Bearer $token",
+                partnerIdFilter = "eq.$partnerId"
+            )
+            if (response.isSuccessful) {
+                val list = response.body()
+                val details = list?.firstOrNull()
+                _bankDetails.value = details
+                if (details != null) {
+                    _currentPartner.update { current ->
+                        current?.copy(
+                            payoutMethod = details.payoutMethod ?: current.payoutMethod,
+                            accountHolderName = details.accountHolderName ?: current.accountHolderName,
+                            accountNumber = details.accountNumber ?: current.accountNumber,
+                            ifscCode = details.ifscCode ?: current.ifscCode,
+                            bankName = details.bankName ?: current.bankName,
+                            upiId = details.upiId ?: current.upiId
+                        )
+                    }
+                }
+                Result.success(details)
+            } else {
+                Result.failure(Exception("Failed to load bank details: ${response.code()}"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun fetchBankDetails(): DeliveryPartnerBankDetails? {
+        val res = getBankDetails()
+        return res.getOrNull()
+    }
+
     suspend fun upsertBankDetails(
         payoutMethod: String,
         holderName: String,
@@ -2115,6 +2163,15 @@ class SupabaseRepository(
                     upiId = upiId
                 )
             }
+            _bankDetails.value = DeliveryPartnerBankDetails(
+                deliveryPartnerId = partnerId,
+                payoutMethod = payoutMethod,
+                accountHolderName = holderName,
+                accountNumber = accountNumber,
+                ifscCode = ifsc,
+                bankName = bankName,
+                upiId = upiId
+            )
             addNotification("Bank Details Updated", "Your payout account information was updated.", "info")
             Result.success(true)
         } catch (e: Exception) {
@@ -2289,6 +2346,14 @@ class SupabaseRepository(
 
                 if (page == 0) {
                     _assignments.value = enrichedList
+                    val pending = enrichedList.firstOrNull {
+                        it.status == "assigned" &&
+                        !isAssignmentHandled(it.id) &&
+                        !isAssignmentExpired(it)
+                    }
+                    if (pending != null && _incomingAssignmentAlert.value == null) {
+                        _incomingAssignmentAlert.value = pending
+                    }
                 } else {
                     val combined = (_assignments.value + enrichedList).distinctBy { it.id }
                     _assignments.value = combined
@@ -2745,13 +2810,15 @@ class SupabaseRepository(
                 val payoutsDeferred = async { fetchPaymentRequests() }
                 val notifsDeferred = async { fetchNotifications() }
                 val reviewsDeferred = async { fetchReviews() }
+                val bankDeferred = async { fetchBankDetails() }
                 awaitAll(
                     assignmentsDeferred,
                     earningsDeferred,
                     ledgerDeferred,
                     payoutsDeferred,
                     notifsDeferred,
-                    reviewsDeferred
+                    reviewsDeferred,
+                    bankDeferred
                 )
             }
         } finally {
@@ -2767,6 +2834,7 @@ class SupabaseRepository(
         _earnings.value = emptyList()
         _cashLedger.value = emptyList()
         _paymentRequests.value = emptyList()
+        _bankDetails.value = null
         _notifications.value = emptyList()
         _reviews.value = emptyList()
         _lastUpdatedLocation.value = null

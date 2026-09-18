@@ -54,6 +54,11 @@ fun DashboardScreen(
     val isGpsActive by viewModel.isTrackingLocation.collectAsState()
     val currentLocation by viewModel.currentLocation.collectAsState()
     val incomingAlert by viewModel.incomingAssignmentAlert.collectAsState()
+    val assignments by viewModel.assignments.collectAsState()
+
+    val pendingOrder = incomingAlert ?: assignments.firstOrNull {
+        it.status == "assigned" && !viewModel.isAssignmentHandled(it.id) && !viewModel.isAssignmentExpired(it)
+    }
 
     val locationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -74,112 +79,14 @@ fun DashboardScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Realtime Incoming Order Alert Banner on Home Tab
-        incomingAlert?.let { alert ->
+        // Realtime Incoming Order Alert Banner on Home Tab with 60s live countdown
+        pendingOrder?.let { alert ->
             item {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("home_incoming_alert_banner"),
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(containerColor = AmberAccent),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(32.dp)
-                                        .clip(CircleShape)
-                                        .background(Slate900),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.FlashOn,
-                                        contentDescription = "New Order",
-                                        tint = AmberAccent,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Column {
-                                    Text(
-                                        text = "NEW ORDER ASSIGNED!",
-                                        style = MaterialTheme.typography.labelLarge.copy(
-                                            fontWeight = FontWeight.ExtraBold,
-                                            color = Slate900
-                                        )
-                                    )
-                                    Text(
-                                        text = "Order #${alert.orderNumber} • ${alert.itemCount} Items",
-                                        style = MaterialTheme.typography.bodySmall.copy(
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = Slate800
-                                        )
-                                    )
-                                }
-                            }
-
-                            Text(
-                                text = "₹${alert.deliveryFee.toInt()}",
-                                style = MaterialTheme.typography.titleLarge.copy(
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = Slate900
-                                )
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        Text(
-                            text = "Pickup: ${alert.storeName} (${alert.estimatedPickupDistanceKm} km) ➔ Drop: ${alert.customerName}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Slate800,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            OutlinedButton(
-                                onClick = { viewModel.rejectOrder(alert.id) },
-                                modifier = Modifier.weight(1f),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Slate900),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, Slate900.copy(alpha = 0.5f)),
-                                shape = RoundedCornerShape(10.dp)
-                            ) {
-                                Text("Pass", fontWeight = FontWeight.Bold)
-                            }
-
-                            Button(
-                                onClick = { viewModel.acceptOrder(alert) },
-                                modifier = Modifier.weight(1.5f),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Slate900,
-                                    contentColor = Color.White
-                                ),
-                                shape = RoundedCornerShape(10.dp)
-                            ) {
-                                Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("ACCEPT NOW", fontWeight = FontWeight.ExtraBold)
-                            }
-                        }
-                    }
-                }
+                PendingAssignmentCard(
+                    assignment = alert,
+                    onAccept = { viewModel.acceptOrder(alert) },
+                    onReject = { viewModel.rejectOrder(alert.id) }
+                )
             }
         }
         // Online / Offline Hero Toggle Banner

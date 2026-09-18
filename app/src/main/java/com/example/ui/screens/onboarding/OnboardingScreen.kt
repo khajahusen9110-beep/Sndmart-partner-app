@@ -48,11 +48,12 @@ fun OnboardingScreen(
     val context = LocalContext.current
 
     val cities by viewModel.cities.collectAsState()
-    var selectedCityId by remember { mutableStateOf("a5cd2248-f0f9-41b4-ad54-a31293a8257f") }
+    var selectedCityId by remember { mutableStateOf("") }
 
-    // Fetch fresh authenticated user UUID from session
+    // Fetch fresh authenticated user UUID from session and reload active cities
     var authUserId by remember { mutableStateOf<String?>(viewModel.prefs.userId) }
     LaunchedEffect(Unit) {
+        viewModel.loadCities(forceRefresh = true)
         val realId = viewModel.getFreshAuthUserId()
         if (!realId.isNullOrBlank()) {
             authUserId = realId
@@ -61,8 +62,10 @@ fun OnboardingScreen(
 
     // Update selectedCityId when cities load
     LaunchedEffect(cities) {
-        if (cities.isNotEmpty() && !cities.any { it.id == selectedCityId }) {
-            selectedCityId = cities.first().id
+        if (cities.isNotEmpty()) {
+            if (selectedCityId.isBlank() || !cities.any { it.id == selectedCityId }) {
+                selectedCityId = cities.first().id
+            }
         }
     }
 
@@ -407,28 +410,43 @@ fun OnboardingScreen(
             )
             Spacer(modifier = Modifier.height(6.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                cities.forEach { city ->
-                    val isCitySelected = selectedCityId == city.id
-                    FilterChip(
-                        selected = isCitySelected,
-                        onClick = { selectedCityId = city.id },
-                        label = { Text(city.name) },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.LocationCity,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = EmeraldPrimary,
-                            selectedLabelColor = Color.White
-                        )
+            if (cities.isEmpty()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(vertical = 4.dp)
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = EmeraldPrimary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Loading active operating cities...",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    cities.forEach { city ->
+                        val isCitySelected = selectedCityId == city.id
+                        FilterChip(
+                            selected = isCitySelected,
+                            onClick = { selectedCityId = city.id },
+                            label = { Text(city.name) },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.LocationCity,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = EmeraldPrimary,
+                                selectedLabelColor = Color.White
+                            )
+                        )
+                    }
                 }
             }
 
@@ -596,10 +614,10 @@ fun OnboardingScreen(
                     val effectiveCityId = if (selectedCityId.isNotBlank() && selectedCityId != "c1111111-1111-1111-1111-111111111111") {
                         selectedCityId
                     } else {
-                        cities.firstOrNull()?.id ?: "a5cd2248-f0f9-41b4-ad54-a31293a8257f"
+                        cities.firstOrNull()?.id ?: ""
                     }
                     if (effectiveCityId.isBlank()) {
-                        viewModel.showMessage("Please select your operating delivery city")
+                        viewModel.showMessage("Please wait for operating delivery cities to load, or select a city")
                         return@Button
                     }
                     if (selectedVehicleType != "cycle" && vehicleNumber.isBlank()) {

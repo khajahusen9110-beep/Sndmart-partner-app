@@ -41,6 +41,11 @@ fun DeliveriesScreen(
     val isDataLoading by viewModel.isDataLoading.collectAsState()
     val canLoadMore by viewModel.canLoadMoreDeliveries.collectAsState()
     val isLoadingMore by viewModel.isLoadingMoreDeliveries.collectAsState()
+    val incomingAlert by viewModel.incomingAssignmentAlert.collectAsState()
+
+    val pendingOrder = incomingAlert ?: assignments.firstOrNull {
+        it.status == "assigned" && !viewModel.isAssignmentHandled(it.id) && !viewModel.isAssignmentExpired(it)
+    }
 
     val activeAssignments = assignments.filter {
         it.status in listOf("accepted", "arrived_pickup", "picked_up", "out_for_delivery", "arrived_drop")
@@ -83,7 +88,7 @@ fun DeliveriesScreen(
             when (selectedTab) {
                 0 -> {
                     // Active Assignments Tab
-                    if (activeAssignments.isEmpty()) {
+                    if (activeAssignments.isEmpty() && pendingOrder == null) {
                         EmptyDeliveriesState(
                             title = "No Active Deliveries",
                             subtitle = "When you accept an assignment, it will appear here with live navigation and pickup steps.",
@@ -94,6 +99,15 @@ fun DeliveriesScreen(
                             contentPadding = PaddingValues(16.dp),
                             verticalArrangement = Arrangement.spacedBy(14.dp)
                         ) {
+                            pendingOrder?.let { alert ->
+                                item {
+                                    PendingAssignmentCard(
+                                        assignment = alert,
+                                        onAccept = { viewModel.acceptOrder(alert) },
+                                        onReject = { viewModel.rejectOrder(alert.id) }
+                                    )
+                                }
+                            }
                             items(activeAssignments) { assignment ->
                                 ActiveDeliveryCard(
                                     assignment = assignment,

@@ -26,6 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.DeliveryPartner
+import com.example.data.model.DeliveryPartnerBankDetails
 import com.example.ui.MainViewModel
 import com.example.ui.components.StatusPill
 import com.example.ui.theme.*
@@ -35,6 +36,11 @@ fun ProfileScreen(
     partner: DeliveryPartner,
     viewModel: MainViewModel
 ) {
+    LaunchedEffect(Unit) {
+        viewModel.loadBankDetails()
+    }
+
+    val bankDetails by viewModel.bankDetails.collectAsState()
     var showBankEditDialog by remember { mutableStateOf(false) }
     var soundAlertsEnabled by remember { mutableStateOf(viewModel.prefs.soundAlertsEnabled) }
     val isTracking by viewModel.isTrackingLocation.collectAsState()
@@ -183,16 +189,43 @@ fun ProfileScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(14.dp)) {
+                        val currentMethod = bankDetails?.payoutMethod ?: partner.payoutMethod ?: "bank"
+                        val currentUpi = bankDetails?.upiId ?: partner.upiId
+                        val currentBank = bankDetails?.bankName ?: partner.bankName
+                        val currentAcc = bankDetails?.accountNumber ?: partner.accountNumber
+                        val currentIfsc = bankDetails?.ifscCode ?: partner.ifscCode
+                        val currentHolder = bankDetails?.accountHolderName ?: partner.accountHolderName ?: partner.name
+
                         Text(
-                            text = "Primary Payout: ${(partner.payoutMethod ?: "bank").uppercase()}",
+                            text = "Primary Payout: ${currentMethod.uppercase()}",
                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, color = EmeraldPrimary)
                         )
                         Spacer(modifier = Modifier.height(4.dp))
-                        if (partner.payoutMethod == "upi") {
-                            Text(text = "UPI ID: ${partner.upiId ?: "arjun.rider@okhdfcbank"}", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
+                        if (currentMethod == "upi") {
+                            Text(
+                                text = "UPI ID: ${currentUpi ?: "Not added yet"}",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                            )
                         } else {
-                            Text(text = "Bank: ${partner.bankName ?: "HDFC Bank"} (${partner.accountNumber ?: "•••• 9012"})", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
-                            Text(text = "IFSC: ${partner.ifscCode ?: "HDFC0001234"} • ${partner.accountHolderName ?: partner.name}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                            val bankDisplay = if (!currentBank.isNullOrBlank() || !currentAcc.isNullOrBlank()) {
+                                val maskedAcc = if (!currentAcc.isNullOrBlank()) {
+                                    if (currentAcc.length > 4) "•••• ${currentAcc.takeLast(4)}" else currentAcc
+                                } else ""
+                                "${currentBank ?: "Bank"} ($maskedAcc)".trim()
+                            } else {
+                                "Not added yet"
+                            }
+                            Text(
+                                text = "Bank: $bankDisplay",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                            )
+                            if (!currentIfsc.isNullOrBlank() || !currentHolder.isNullOrBlank()) {
+                                Text(
+                                    text = "IFSC: ${currentIfsc ?: "Not added yet"} • ${currentHolder ?: ""}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.outline
+                                )
+                            }
                         }
                     }
                 }
@@ -481,6 +514,7 @@ fun ProfileScreen(
     if (showBankEditDialog) {
         BankDetailsEditDialog(
             partner = partner,
+            bankDetails = bankDetails,
             onDismiss = { showBankEditDialog = false },
             onSave = { method, name, acc, ifsc, bank, upi ->
                 viewModel.upsertBankDetails(method, name, acc, ifsc, bank, upi)
@@ -493,15 +527,23 @@ fun ProfileScreen(
 @Composable
 fun BankDetailsEditDialog(
     partner: DeliveryPartner,
+    bankDetails: DeliveryPartnerBankDetails? = null,
     onDismiss: () -> Unit,
     onSave: (method: String, name: String, acc: String, ifsc: String, bank: String, upi: String?) -> Unit
 ) {
-    var payoutMethod by remember { mutableStateOf(partner.payoutMethod) }
-    var holderName by remember { mutableStateOf(partner.accountHolderName ?: partner.name) }
-    var bankName by remember { mutableStateOf(partner.bankName ?: "HDFC Bank") }
-    var accountNumber by remember { mutableStateOf(partner.accountNumber ?: "50100456789012") }
-    var ifscCode by remember { mutableStateOf(partner.ifscCode ?: "HDFC0001234") }
-    var upiId by remember { mutableStateOf(partner.upiId ?: "arjun.rider@okhdfcbank") }
+    val initialMethod = bankDetails?.payoutMethod ?: partner.payoutMethod ?: "bank"
+    val initialHolder = bankDetails?.accountHolderName ?: partner.accountHolderName ?: partner.name
+    val initialBank = bankDetails?.bankName ?: partner.bankName ?: ""
+    val initialAcc = bankDetails?.accountNumber ?: partner.accountNumber ?: ""
+    val initialIfsc = bankDetails?.ifscCode ?: partner.ifscCode ?: ""
+    val initialUpi = bankDetails?.upiId ?: partner.upiId ?: ""
+
+    var payoutMethod by remember { mutableStateOf(initialMethod) }
+    var holderName by remember { mutableStateOf(initialHolder) }
+    var bankName by remember { mutableStateOf(initialBank) }
+    var accountNumber by remember { mutableStateOf(initialAcc) }
+    var ifscCode by remember { mutableStateOf(initialIfsc) }
+    var upiId by remember { mutableStateOf(initialUpi) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
