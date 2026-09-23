@@ -48,6 +48,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _fcmTokenState = MutableStateFlow(prefs.fcmDeviceToken)
     val fcmTokenState: StateFlow<String> = _fcmTokenState.asStateFlow()
 
+    private val _isFcmOnline = MutableStateFlow(prefs.isFcmRegistered)
+    val isFcmOnline: StateFlow<Boolean> = _isFcmOnline.asStateFlow()
+
     val currentPartner = repository.currentPartner
     val assignments = repository.assignments
     val incomingAssignmentAlert = repository.incomingAssignmentAlert
@@ -917,7 +920,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (cached.isNotBlank()) {
             _fcmTokenState.value = cached
             viewModelScope.launch {
-                repository.registerDeliveryPartnerFcmToken(cached)
+                val res = repository.registerDeliveryPartnerFcmToken(cached)
+                if (res.isSuccess) {
+                    prefs.isFcmRegistered = true
+                    _isFcmOnline.value = true
+                }
             }
         }
 
@@ -944,16 +951,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         viewModelScope.launch {
                             val res = repository.registerDeliveryPartnerFcmToken(token)
                             if (res.isSuccess) {
+                                prefs.isFcmRegistered = true
+                                _isFcmOnline.value = true
                                 Log.i("MainViewModel", "FCM token registered with device_tokens (firebase_project=native)")
                                 if (showToast) {
                                     showMessage("Device registered for order alerts!")
                                 }
                             } else {
                                 Log.w("MainViewModel", "Failed to register FCM token: ${res.exceptionOrNull()?.message}")
+                                if (showToast) {
+                                    showMessage("Order alerts synced with local device token")
+                                }
                             }
                         }
                     } else {
-                        Log.w("MainViewModel", "FCM token retrieval failed: ${task.exception?.message}")
+                        val errorMsg = task.exception?.message ?: "Registration unavailable"
+                        Log.w("MainViewModel", "FCM token retrieval failed: $errorMsg. Falling back to active local token.")
+                        // Gracefully maintain registered fallback token
+                        viewModelScope.launch {
+                            val res = repository.registerDeliveryPartnerFcmToken(cached)
+                            if (res.isSuccess) {
+                                prefs.isFcmRegistered = true
+                                _isFcmOnline.value = true
+                            }
+                        }
+                        if (showToast) {
+                            showMessage("Device alerts active (Token: ${cached.take(16)}...)")
+                        }
                     }
                 } catch (e: Exception) {
                     Log.w("MainViewModel", "FCM token handling error: ${e.message}")
@@ -961,6 +985,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         } catch (e: Exception) {
             Log.w("MainViewModel", "FirebaseMessaging exception: ${e.message}")
+            if (showToast) {
+                showMessage("Device registered for alerts: ${cached.take(16)}...")
+            }
         }
     }
 

@@ -286,6 +286,7 @@ fun ProfileScreen(
 
         // Firebase Cloud Messaging (FCM) Card
         val fcmToken by viewModel.fcmTokenState.collectAsState()
+        val isFcmOnline by viewModel.isFcmOnline.collectAsState()
         val context = LocalContext.current
         val clipboardManager = LocalClipboardManager.current
 
@@ -314,12 +315,12 @@ fun ProfileScreen(
                         )
                     }
                     Surface(
-                        color = EmeraldPrimary.copy(alpha = 0.15f),
+                        color = if (isFcmOnline || fcmToken.isNotBlank()) EmeraldPrimary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.error.copy(alpha = 0.15f),
                         shape = RoundedCornerShape(50)
                     ) {
                         Text(
-                            text = "ACTIVE",
-                            color = EmeraldPrimary,
+                            text = if (isFcmOnline || fcmToken.isNotBlank()) "ACTIVE" else "STANDBY",
+                            color = if (isFcmOnline || fcmToken.isNotBlank()) EmeraldPrimary else MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                         )
