@@ -35,8 +35,9 @@ jobs:
 
   build:
     needs: test
-    # Signed release builds only from main (pull requests have no access to the secrets).
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    # Signed release builds on pushes to main, or on demand ("Run workflow") for any branch.
+    # Pull requests never get the signing secrets.
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     env:
       # Play Store needs a strictly increasing versionCode; VERSION_NAME is what the
