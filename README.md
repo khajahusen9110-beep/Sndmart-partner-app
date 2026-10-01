@@ -58,8 +58,43 @@ CI (`.github/workflows/main.yml`) runs unit tests on every push and pull request
 `GOOGLE_MAPS_API_KEY`. Optional repository variable `VERSION_NAME` (default `1.1.0`);
 `versionCode` is the workflow run number.
 
-The force-update screen compares `VERSION_NAME` with `app_versions.minimum_supported_version`
-(platform `delivery_partner_app`), so bump `VERSION_NAME` for every store release.
+### Shipping an update and making it required
+
+The app reads the `app_versions` row for platform `delivery_partner_app` on launch and every
+time it comes back to the foreground, and compares it with its own `VERSION_NAME`:
+
+| Row state | What partners see |
+| --- | --- |
+| installed < `minimum_supported_version` | Blocking "App Update Required" screen |
+| `force_update = true` and installed < `latest_version` | Blocking screen |
+| installed < `latest_version` | "Update available" dialog with **Later** |
+| otherwise | nothing |
+
+**Update** opens Google Play's full-screen in-app update (only for installs from the Play
+Store, once Play offers the new build to that device), otherwise the Play Store listing.
+
+Release steps:
+
+1. Set the repository variable `VERSION_NAME` to the new version (for example `1.2.0`) and
+   run the workflow on `main`. `versionCode` is the run number, so it always increases.
+2. Upload the AAB to Play Console and wait until the release is live.
+3. Point the app at it:
+
+   ```sql
+   -- optional update
+   update public.app_versions set latest_version = '1.2.0', updated_at = now()
+    where platform = 'delivery_partner_app';
+
+   -- required update (blocks every older build)
+   update public.app_versions set latest_version = '1.2.0', minimum_supported_version = '1.2.0',
+          update_message = 'Please update to keep receiving orders.', updated_at = now()
+    where platform = 'delivery_partner_app';
+   ```
+
+Only make an update required after Play shows it as available. Otherwise partners are blocked
+with nothing to install.
+
+The package name `com.sndmart.delivery` is permanent once uploaded to Play.
 
 R8 minification is still off; keep rules are already in `app/proguard-rules.pro`. Turn on
 `isMinifyEnabled` only after smoke-testing a minified release build.

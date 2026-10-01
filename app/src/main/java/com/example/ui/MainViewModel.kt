@@ -23,7 +23,9 @@ import com.example.data.remote.SupabaseRepository
 import com.example.service.DeliveryPartnerFcmService
 import com.example.service.SndmartFirebaseMessagingService
 import com.example.util.availableForPayout
+import com.example.util.UpdateDecision
 import com.example.util.cashInHand
+import com.example.util.decideUpdate
 import com.example.util.pendingHandover
 import com.example.util.todayEarnings
 import com.google.firebase.messaging.FirebaseMessaging
@@ -138,16 +140,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     companion object {
         const val CURRENT_APP_VERSION = BuildConfig.VERSION_NAME
 
-        fun compareVersions(a: String, b: String): Int {
-            val pa = a.split('.').map { it.trim().toIntOrNull() ?: 0 }
-            val pb = b.split('.').map { it.trim().toIntOrNull() ?: 0 }
-            for (i in 0 until 3) {
-                val valA = pa.getOrElse(i) { 0 }
-                val valB = pb.getOrElse(i) { 0 }
-                if (valA != valB) return valA - valB
-            }
-            return 0
-        }
+        fun compareVersions(a: String, b: String): Int = com.example.util.compareVersions(a, b)
     }
 
     private val _isCheckingStartup = MutableStateFlow(true)
@@ -158,6 +151,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _isUpdateRequired = MutableStateFlow(false)
     val isUpdateRequired: StateFlow<Boolean> = _isUpdateRequired.asStateFlow()
+
+    /** Set when a newer build exists but is not mandatory; the partner can choose "Later". */
+    private val _optionalUpdateInfo = MutableStateFlow<AppVersionInfo?>(null)
+    val optionalUpdateInfo: StateFlow<AppVersionInfo?> = _optionalUpdateInfo.asStateFlow()
+    private var dismissedOptionalVersion: String? = null
+
+    fun dismissOptionalUpdate() {
+        dismissedOptionalVersion = _optionalUpdateInfo.value?.latestVersion
+        _optionalUpdateInfo.value = null
+    }
 
     private val _maintenanceModeActive = MutableStateFlow(false)
     val maintenanceModeActive: StateFlow<Boolean> = _maintenanceModeActive.asStateFlow()
@@ -181,22 +184,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _isCheckingStartup.value = true
             try {
+                // A failed check (offline) keeps the previous decision instead of unblocking.
                 val versionInfo = repository.checkAppVersion()
                 if (versionInfo != null) {
-                    val minVersion = versionInfo.minimumSupportedVersion
-                    val isBelowMinimum = if (!minVersion.isNullOrBlank()) {
-                        compareVersions(CURRENT_APP_VERSION, minVersion) < 0
-                    } else false
-
-                    if (isBelowMinimum || versionInfo.forceUpdate) {
-                        _blockingUpdateInfo.value = versionInfo
-                        _isUpdateRequired.value = true
-                        _isCheckingStartup.value = false
-                        return@launch
+                    val decision = decideUpdate(
+                        installedVersion = CURRENT_APP_VERSION,
+                        minimumSupportedVersion = versionInfo.minimumSupportedVersion,
+                        latestVersion = versionInfo.latestVersion,
+                        forceUpdate = versionInfo.forceUpdate
+                    )
+                    _blockingUpdateInfo.value = versionInfo.takeIf { decision == UpdateDecision.REQUIRED }
+                    _isUpdateRequired.value = decision == UpdateDecision.REQUIRED
+                    _optionalUpdateInfo.value = versionInfo.takeIf {
+                        decision == UpdateDecision.OPTIONAL && it.latestVersion != dismissedOptionalVersion
                     }
+                    if (decision == UpdateDecision.REQUIRED) return@launch
                 }
-                _isUpdateRequired.value = false
-                _blockingUpdateInfo.value = null
 
                 val settings = repository.checkMaintenanceMode()
                 if (settings != null && settings.enabled) {
@@ -247,6 +250,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onAppResume() {
+        // Picks up a force update the admin enabled while the app was in the background.
+        runStartupChecks()
         viewModelScope.launch {
             if (_authUiState.value is AuthUiState.Authenticated || _authUiState.value is AuthUiState.UnderReview) {
                 val sessionValid = repository.ensureValidSession().isSuccess

@@ -1,10 +1,12 @@
 package com.example
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.net.Uri
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -25,6 +27,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.google.android.play.core.appupdate.AppUpdateManagerFactory
+import com.google.android.play.core.appupdate.AppUpdateOptions
+import com.google.android.play.core.install.model.AppUpdateType
+import com.google.android.play.core.install.model.UpdateAvailability
 import com.example.data.model.DeliveryAssignment
 import com.example.ui.AuthUiState
 import com.example.ui.MainViewModel
@@ -53,6 +59,74 @@ enum class MainNavigationTab(val title: String, val icon: ImageVector) {
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
 
+    private val appUpdateManager by lazy { AppUpdateManagerFactory.create(this) }
+
+    // If the partner backs out of Play's update screen the blocking screen stays up,
+    // so the result needs no handling here.
+    private val updateLauncher =
+        registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { }
+
+    /**
+     * Starts Google Play's full-screen in-app update. Falls back to the Play Store listing
+     * when Play cannot offer it (app not installed from Play, update not yet rolled out to
+     * this device, or no Play Store).
+     */
+    private fun startAppUpdate() {
+        appUpdateManager.appUpdateInfo
+            .addOnSuccessListener { info ->
+                val available = info.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE &&
+                    info.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE)
+                val inProgress = info.updateAvailability() == UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS
+                if (available || inProgress) {
+                    try {
+                        appUpdateManager.startUpdateFlowForResult(
+                            info,
+                            updateLauncher,
+                            AppUpdateOptions.newBuilder(AppUpdateType.IMMEDIATE).build()
+                        )
+                        return@addOnSuccessListener
+                    } catch (e: Exception) {
+                        // Fall through to the store listing.
+                    }
+                }
+                openPlayStoreListing()
+            }
+            .addOnFailureListener { openPlayStoreListing() }
+    }
+
+    private fun openPlayStoreListing() {
+        val pkg = BuildConfig.APPLICATION_ID
+        val market = Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$pkg"))
+            .setPackage("com.android.vending")
+        val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=$pkg"))
+        try {
+            startActivity(market)
+        } catch (e: ActivityNotFoundException) {
+            try {
+                startActivity(web)
+            } catch (e: ActivityNotFoundException) {
+                viewModel.showMessage("Please update the app from the Play Store")
+            }
+        }
+    }
+
+    /** Resumes an immediate update that was interrupted (e.g. the app went to background). */
+    private fun resumeInterruptedUpdate() {
+        appUpdateManager.appUpdateInfo.addOnSuccessListener { info ->
+            if (info.updateAvailability() == UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS) {
+                try {
+                    appUpdateManager.startUpdateFlowForResult(
+                        info,
+                        updateLauncher,
+                        AppUpdateOptions.newBuilder(AppUpdateType.IMMEDIATE).build()
+                    )
+                } catch (e: Exception) {
+                    // Blocking screen stays up; the partner can tap Update again.
+                }
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -60,7 +134,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             MyApplicationTheme {
-                MainAppRoot(viewModel = viewModel)
+                MainAppRoot(viewModel = viewModel, onUpdateApp = ::startAppUpdate)
             }
         }
     }
@@ -85,12 +159,13 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.onAppResume()
+        if (viewModel.isUpdateRequired.value) resumeInterruptedUpdate()
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainAppRoot(viewModel: MainViewModel) {
+fun MainAppRoot(viewModel: MainViewModel, onUpdateApp: () -> Unit = {}) {
     val authState by viewModel.authUiState.collectAsState()
     val userMessage by viewModel.userMessage.collectAsState()
     val selectedAssignment by viewModel.selectedAssignmentForDetail.collectAsState()
@@ -99,6 +174,7 @@ fun MainAppRoot(viewModel: MainViewModel) {
     val isDataLoading by viewModel.isDataLoading.collectAsState()
     val isUpdateRequired by viewModel.isUpdateRequired.collectAsState()
     val blockingUpdateInfo by viewModel.blockingUpdateInfo.collectAsState()
+    val optionalUpdateInfo by viewModel.optionalUpdateInfo.collectAsState()
     val maintenanceModeActive by viewModel.maintenanceModeActive.collectAsState()
     val maintenanceMessage by viewModel.maintenanceMessage.collectAsState()
 
@@ -141,9 +217,38 @@ fun MainAppRoot(viewModel: MainViewModel) {
     if (isUpdateRequired) {
         BlockingUpdateScreen(
             updateInfo = blockingUpdateInfo,
+            onUpdateNow = onUpdateApp,
             onCheckAgain = { viewModel.runStartupChecks() }
         )
         return
+    }
+
+    optionalUpdateInfo?.let { info ->
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissOptionalUpdate() },
+            icon = { Icon(Icons.Default.SystemUpdate, contentDescription = null, tint = EmeraldPrimary) },
+            title = { Text("Update available") },
+            text = {
+                Text(
+                    listOfNotNull(
+                        info.latestVersion?.let { "Version $it is available on the Play Store." },
+                        info.updateMessage?.takeIf { it.isNotBlank() }
+                    ).joinToString("\n\n")
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.dismissOptionalUpdate()
+                        onUpdateApp()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
+                ) { Text("Update") }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.dismissOptionalUpdate() }) { Text("Later") }
+            }
+        )
     }
 
     Box(modifier = Modifier.fillMaxSize()) {

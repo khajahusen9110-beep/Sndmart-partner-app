@@ -1,7 +1,5 @@
 package com.example.ui.screens.update
 
-import android.content.Intent
-import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -17,7 +15,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -30,12 +27,14 @@ import com.example.ui.theme.EmeraldPrimary
 @Composable
 fun BlockingUpdateScreen(
     updateInfo: AppVersionInfo?,
+    onUpdateNow: () -> Unit,
     onCheckAgain: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
     val currentVersion = MainViewModel.CURRENT_APP_VERSION
-    val minVersion = updateInfo?.minimumSupportedVersion ?: "Latest"
+    // With force_update the target is latest_version; otherwise the minimum supported one.
+    val minVersion = (if (updateInfo?.forceUpdate == true) updateInfo?.latestVersion else null)
+        ?: updateInfo?.minimumSupportedVersion ?: "Latest"
     val updateMessage = updateInfo?.updateMessage?.takeIf { it.isNotBlank() }
         ?: "A newer version of the Sndmart Delivery Partner app is required to continue. Please update to access the latest dispatch features, stability enhancements, and order routing."
 
@@ -167,18 +166,8 @@ fun BlockingUpdateScreen(
 
             // Primary Update Button
             Button(
-                onClick = {
-                    val targetUrl = updateInfo?.downloadUrl?.takeIf { it.isNotBlank() }
-                        ?: "https://play.google.com/store/apps/details?id=com.sndmart.delivery"
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl)).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    try {
-                        context.startActivity(intent)
-                    } catch (e: Exception) {
-                        // Fallback if no market/browser handler
-                    }
-                },
+                // Google Play in-app update, or the Play Store listing as fallback (MainActivity).
+                onClick = onUpdateNow,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp)
