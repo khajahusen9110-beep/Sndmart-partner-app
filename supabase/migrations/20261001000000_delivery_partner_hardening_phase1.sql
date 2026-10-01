@@ -1,41 +1,10 @@
--- Delivery partner app hardening.
---
--- The partner app now performs every state change through SECURITY DEFINER RPCs that
--- check ownership and state. This migration closes the direct-table paths that let a
--- partner bypass those checks (e.g. PATCH status='delivered' without the customer OTP,
--- inserting payout requests above the available balance, or forging cash ledger rows).
---
--- Review before applying: other apps sharing this database must not rely on the
--- partner-side direct writes removed below.
+-- PHASE 1 - safe to apply while the old delivery partner app is still on phones.
+-- Adds/hardens RPCs only; the direct-write lockdown is in PHASE 2
+-- (20261002000000_delivery_partner_hardening_phase2.sql).
 
 begin;
 
--- 1. Assignments: partners may no longer UPDATE rows directly (RPCs bypass RLS as owner).
-drop policy if exists assignments_partner_update on public.delivery_assignments;
-create policy assignments_admin_update on public.delivery_assignments
-  for update
-  using (is_admin())
-  with check (is_admin());
-
--- 2. Orders: remove the delivery-partner branch of the update policy. Partners move orders
---    forward only through delivery_partner_* RPCs.
-drop policy if exists orders_role_update on public.orders;
-create policy orders_role_update on public.orders
-  for update
-  using (
-    is_admin()
-    or customer_id = auth.uid()
-    or ((vendor_id = current_vendor_id())
-        and ((payment_method <> 'upi'::payment_method) or (payment_status = 'paid'::payment_status)))
-  );
-
--- 3. Payout requests only through delivery_partner_request_payment (it enforces the balance).
-drop policy if exists "delivery partners create own payment requests" on public.delivery_partner_payment_requests;
-
--- 4. Cash ledger: no direct partner inserts. 'collected' rows are written by
---    delivery_partner_complete_delivery; remittances go through the RPC below.
-drop policy if exists cash_ledger_partner_insert on public.delivery_partner_cash_ledger;
-
+-- 4. Cash remittance RPC. The direct-insert policy stays until PHASE 2 so the old app keeps working.
 create or replace function public.delivery_partner_request_cash_remittance(p_amount numeric, p_note text default null)
 returns public.delivery_partner_cash_ledger
 language plpgsql
@@ -65,6 +34,8 @@ grant execute on function public.delivery_partner_request_cash_remittance(numeri
 
 -- 5. set_delivery_partner_availability had no authorization check: any signed-in user could
 --    toggle any partner. Restrict to admins, the partner's city admin, or the partner.
+--    auth.uid() is null for service_role / cron / internal callers, which stay allowed
+--    (anon cannot execute this function: it is granted to authenticated and service_role only).
 create or replace function public.set_delivery_partner_availability(p_partner_id uuid, p_online boolean, p_available boolean default true)
 returns boolean
 language plpgsql
@@ -75,7 +46,8 @@ declare d public.delivery_partners;
 begin
   select * into d from public.delivery_partners where id = p_partner_id;
   if d.id is null then return false; end if;
-  if not (is_admin()
+  if not (auth.uid() is null
+          or is_admin()
           or d.user_id = auth.uid()
           or (d.city_id is not null and is_city_admin_for(d.city_id))) then
     raise exception 'Not authorized';
@@ -89,6 +61,9 @@ begin
 end; $function$;
 
 -- 6. Partners must not edit their own rating counters or re-point the row to another user.
+--    Only top-level updates (pg_trigger_depth() = 1, i.e. the partner's own UPDATE statement)
+--    are guarded. Previously this also reverted the total_deliveries increment that
+--    on_order_status_changed makes when the partner completes a delivery, so counters lagged.
 create or replace function public.guard_delivery_partner_self_update()
 returns trigger
 language plpgsql
@@ -96,7 +71,7 @@ security definer
 set search_path to 'public'
 as $function$
 begin
-  if auth.uid() = old.user_id then
+  if auth.uid() = old.user_id and pg_trigger_depth() = 1 then
     new.approval_status := old.approval_status;
     new.rejection_reason := old.rejection_reason;
     new.city_id := old.city_id;
@@ -172,11 +147,16 @@ begin
   return a;
 end; $function$;
 
--- 9. Partner RPCs need a signed-in user; never expose them to anon.
-revoke execute on function public.delivery_partner_complete_delivery(uuid, text, text) from anon;
-revoke execute on function public.delivery_partner_deliver(uuid, text, text) from anon;
-revoke execute on function public.delivery_partner_mark_picked_up(uuid, text) from anon;
-revoke execute on function public.delivery_partner_pickup(uuid, text) from anon;
-revoke execute on function public.delivery_partner_respond_assignment(uuid, boolean) from anon;
+-- 9. Partner RPCs need a signed-in user. These four were executable by PUBLIC (which is how
+--    anon got access), so revoking from anon alone would be a no-op.
+revoke execute on function public.delivery_partner_complete_delivery(uuid, text, text) from public, anon;
+revoke execute on function public.delivery_partner_deliver(uuid, text, text) from public, anon;
+revoke execute on function public.delivery_partner_mark_picked_up(uuid, text) from public, anon;
+revoke execute on function public.delivery_partner_pickup(uuid, text) from public, anon;
+grant execute on function public.delivery_partner_complete_delivery(uuid, text, text) to authenticated, service_role;
+grant execute on function public.delivery_partner_deliver(uuid, text, text) to authenticated, service_role;
+grant execute on function public.delivery_partner_mark_picked_up(uuid, text) to authenticated, service_role;
+grant execute on function public.delivery_partner_pickup(uuid, text) to authenticated, service_role;
+-- delivery_partner_respond_assignment is already authenticated/service_role only.
 
 commit;

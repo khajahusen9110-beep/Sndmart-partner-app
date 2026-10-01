@@ -21,9 +21,14 @@ on its own:
 | Bank / UPI details | `delivery_partner_upsert_bank_details` |
 | Cash remittance | `delivery_partner_request_cash_remittance` (added in `supabase/migrations`) |
 
-`supabase/migrations/20261001000000_delivery_partner_hardening.sql` removes the direct-table
-write paths that let a client bypass these checks. Review it against the customer, vendor and
-admin apps that share the database, then apply it.
+The backend hardening is split in two migrations under `supabase/migrations/`:
+
+- `..._phase1.sql` adds the cash remittance RPC and hardens the existing RPCs. Safe while old
+  app builds are still in use.
+- `..._phase2.sql` removes the direct-table write paths that let a client bypass the RPC
+  checks. Apply it only after forcing every partner onto the RPC-only build (instructions at
+  the top of the file), and after checking the customer, vendor and admin apps that share the
+  database do not rely on those paths.
 
 ## Local setup
 
