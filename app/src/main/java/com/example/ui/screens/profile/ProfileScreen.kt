@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.BuildConfig
 import com.example.data.model.DeliveryPartner
 import com.example.data.model.DeliveryPartnerBankDetails
 import com.example.ui.MainViewModel
@@ -315,12 +316,12 @@ fun ProfileScreen(
                         )
                     }
                     Surface(
-                        color = if (isFcmOnline || fcmToken.isNotBlank()) EmeraldPrimary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.error.copy(alpha = 0.15f),
+                        color = if isFcmOnline EmeraldPrimary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.error.copy(alpha = 0.15f),
                         shape = RoundedCornerShape(50)
                     ) {
                         Text(
-                            text = if (isFcmOnline || fcmToken.isNotBlank()) "ACTIVE" else "STANDBY",
-                            color = if (isFcmOnline || fcmToken.isNotBlank()) EmeraldPrimary else MaterialTheme.colorScheme.error,
+                            text = if isFcmOnline "ACTIVE" else "STANDBY",
+                            color = if isFcmOnline EmeraldPrimary else MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                         )
@@ -336,8 +337,8 @@ fun ProfileScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // FCM Device Token Display & Copy
-                Surface(
+                // Raw FCM token is a debugging aid only.
+                if (BuildConfig.DEBUG) Surface(
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -392,10 +393,10 @@ fun ProfileScreen(
                     ) {
                         Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Sync Token", fontSize = 12.sp)
+                        Text("Re-register Alerts", fontSize = 12.sp)
                     }
 
-                    Button(
+                    if (BuildConfig.DEBUG) Button(
                         onClick = {
                             viewModel.triggerTestIncomingOrderAlert(context)
                         },
@@ -411,7 +412,7 @@ fun ProfileScreen(
 
                 Spacer(modifier = Modifier.height(6.dp))
 
-                TextButton(
+                if (BuildConfig.DEBUG) TextButton(
                     onClick = {
                         viewModel.sendTestNotification(context)
                     },

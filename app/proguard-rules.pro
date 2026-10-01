@@ -19,3 +19,15 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# ---- Kept ready for when isMinifyEnabled is switched on (smoke-test the release first) ----
+# Moshi models (codegen adapters + reflection fallback via KotlinJsonAdapterFactory)
+-keep class com.example.data.model.** { *; }
+-keepclassmembers class * { @com.squareup.moshi.Json <fields>; }
+-keep class kotlin.Metadata { *; }
+# Retrofit service interfaces and generic signatures
+-keepattributes Signature, InnerClasses, EnclosingMethod, *Annotation*
+-keep,allowobfuscation interface com.example.data.remote.SupabaseApiService
+-keepclassmembers,allowshrinking,allowobfuscation interface * { @retrofit2.http.* <methods>; }
+-dontwarn okhttp3.internal.platform.**
+-dontwarn org.conscrypt.**

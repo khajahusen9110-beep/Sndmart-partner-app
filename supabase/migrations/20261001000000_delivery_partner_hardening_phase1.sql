@@ -1,0 +1,162 @@
+-- PHASE 1 - safe to apply while the old delivery partner app is still on phones.
+-- Adds/hardens RPCs only; the direct-write lockdown is in PHASE 2
+-- (20261002000000_delivery_partner_hardening_phase2.sql).
+
+begin;
+
+-- 4. Cash remittance RPC. The direct-insert policy stays until PHASE 2 so the old app keeps working.
+create or replace function public.delivery_partner_request_cash_remittance(p_amount numeric, p_note text default null)
+returns public.delivery_partner_cash_ledger
+language plpgsql
+security definer
+set search_path to 'public'
+as $function$
+declare d public.delivery_partners; in_hand numeric; r public.delivery_partner_cash_ledger;
+begin
+  select * into d from public.delivery_partners where user_id = auth.uid() and is_active = true limit 1;
+  if d.id is null then raise exception 'Delivery partner not found'; end if;
+  if p_amount is null or p_amount <= 0 then raise exception 'Invalid amount'; end if;
+
+  select coalesce(sum(case when entry_type = 'collected' then amount else -amount end), 0)
+    into in_hand
+    from public.delivery_partner_cash_ledger
+   where delivery_partner_id = d.id and status <> 'rejected';
+  if p_amount > in_hand then raise exception 'Amount exceeds cash in hand'; end if;
+
+  insert into public.delivery_partner_cash_ledger(delivery_partner_id, entry_type, amount, status, note)
+  values (d.id, 'remitted', p_amount, 'pending', nullif(trim(p_note), ''))
+  returning * into r;
+  return r;
+end; $function$;
+
+revoke all on function public.delivery_partner_request_cash_remittance(numeric, text) from public, anon;
+grant execute on function public.delivery_partner_request_cash_remittance(numeric, text) to authenticated;
+
+-- 5. set_delivery_partner_availability had no authorization check: any signed-in user could
+--    toggle any partner. Restrict to admins, the partner's city admin, or the partner.
+--    auth.uid() is null for service_role / cron / internal callers, which stay allowed
+--    (anon cannot execute this function: it is granted to authenticated and service_role only).
+create or replace function public.set_delivery_partner_availability(p_partner_id uuid, p_online boolean, p_available boolean default true)
+returns boolean
+language plpgsql
+security definer
+set search_path to 'public'
+as $function$
+declare d public.delivery_partners;
+begin
+  select * into d from public.delivery_partners where id = p_partner_id;
+  if d.id is null then return false; end if;
+  if not (auth.uid() is null
+          or is_admin()
+          or d.user_id = auth.uid()
+          or (d.city_id is not null and is_city_admin_for(d.city_id))) then
+    raise exception 'Not authorized';
+  end if;
+  update public.delivery_partners
+     set is_online = p_online,
+         is_available = case when p_online then p_available else false end,
+         updated_at = now()
+   where id = p_partner_id;
+  return found;
+end; $function$;
+
+-- 6. Partners must not edit their own rating counters or re-point the row to another user.
+--    Only top-level updates (pg_trigger_depth() = 1, i.e. the partner's own UPDATE statement)
+--    are guarded. Previously this also reverted the total_deliveries increment that
+--    on_order_status_changed makes when the partner completes a delivery, so counters lagged.
+create or replace function public.guard_delivery_partner_self_update()
+returns trigger
+language plpgsql
+security definer
+set search_path to 'public'
+as $function$
+begin
+  if auth.uid() = old.user_id and pg_trigger_depth() = 1 then
+    new.approval_status := old.approval_status;
+    new.rejection_reason := old.rejection_reason;
+    new.city_id := old.city_id;
+    new.is_active := old.is_active;
+    new.total_deliveries := old.total_deliveries;
+    new.avg_rating := old.avg_rating;
+    new.total_ratings := old.total_ratings;
+    new.user_id := old.user_id;
+  end if;
+  return new;
+end; $function$;
+
+-- 7. Pickup: lock the row, require a photo inside this assignment's storage folder, accept
+--    assignments the order trigger already moved to 'out_for_delivery' before pickup, and move
+--    a 'ready' order to 'out_for_delivery'.
+create or replace function public.delivery_partner_mark_picked_up(p_assignment_id uuid, p_pickup_photo_url text)
+returns public.delivery_assignments
+language plpgsql
+security definer
+set search_path to 'public'
+as $function$
+declare a public.delivery_assignments; d public.delivery_partners; o public.orders;
+begin
+  if p_pickup_photo_url is null or trim(p_pickup_photo_url) = '' then raise exception 'Pickup photo is required'; end if;
+  select * into a from public.delivery_assignments where id = p_assignment_id for update;
+  select * into d from public.delivery_partners where id = a.delivery_partner_id;
+  if a.id is null or d.user_id is distinct from auth.uid() then raise exception 'Assignment not found'; end if;
+  if split_part(p_pickup_photo_url, '/', 1) <> a.id::text then raise exception 'Invalid pickup photo'; end if;
+  if not (a.status = 'accepted' or (a.status = 'out_for_delivery' and a.pickup_photo_url is null)) then
+    raise exception 'Assignment must be accepted first';
+  end if;
+  update public.delivery_assignments
+     set status = 'picked_up', picked_up_at = now(), pickup_photo_url = p_pickup_photo_url, updated_at = now()
+   where id = a.id
+  returning * into a;
+  select * into o from public.orders where id = a.order_id;
+  if o.status = 'ready'::public.order_status then
+    perform public.transition_order_status(o.id, 'out_for_delivery', auth.uid(), 'Delivery partner picked up order');
+    select * into a from public.delivery_assignments where id = p_assignment_id;
+  end if;
+  return a;
+end; $function$;
+
+-- 8. Delivery: lock the row, accept 'out_for_delivery' as well as 'picked_up', and require the
+--    proof photo inside this assignment's folder. OTP check and settlement are unchanged.
+create or replace function public.delivery_partner_complete_delivery(p_assignment_id uuid, p_otp text, p_delivered_photo_url text)
+returns public.delivery_assignments
+language plpgsql
+security definer
+set search_path to 'public'
+as $function$
+declare a public.delivery_assignments; o public.orders;
+begin
+  if p_delivered_photo_url is null or trim(p_delivered_photo_url) = '' then raise exception 'Delivery proof photo is required'; end if;
+  select * into a from public.delivery_assignments where id = p_assignment_id for update;
+  if a.id is null or not exists(select 1 from public.delivery_partners d where d.id = a.delivery_partner_id and d.user_id = auth.uid() and d.is_active = true) then
+    raise exception 'Assignment not found';
+  end if;
+  if split_part(p_delivered_photo_url, '/', 1) <> a.id::text then raise exception 'Invalid delivery proof photo'; end if;
+  if a.status not in ('picked_up', 'out_for_delivery') then raise exception 'Order must be picked up first'; end if;
+  if a.delivery_otp is null or a.delivery_otp <> trim(p_otp) then raise exception 'Invalid delivery OTP'; end if;
+  update public.delivery_assignments
+     set status = 'delivered', delivered_at = now(), delivered_photo_url = p_delivered_photo_url, updated_at = now()
+   where id = a.id
+  returning * into a;
+  perform public.transition_order_status(a.order_id, 'delivered', auth.uid(), 'Delivery completed with OTP');
+  perform public.settle_delivered_order_earnings(a.order_id);
+  select * into o from public.orders where id = a.order_id;
+  if o.payment_method = 'cash' then
+    insert into public.delivery_partner_cash_ledger(delivery_partner_id, order_id, entry_type, amount, status)
+    values (a.delivery_partner_id, o.id, 'collected', o.total_amount, 'confirmed');
+  end if;
+  return a;
+end; $function$;
+
+-- 9. Partner RPCs need a signed-in user. These four were executable by PUBLIC (which is how
+--    anon got access), so revoking from anon alone would be a no-op.
+revoke execute on function public.delivery_partner_complete_delivery(uuid, text, text) from public, anon;
+revoke execute on function public.delivery_partner_deliver(uuid, text, text) from public, anon;
+revoke execute on function public.delivery_partner_mark_picked_up(uuid, text) from public, anon;
+revoke execute on function public.delivery_partner_pickup(uuid, text) from public, anon;
+grant execute on function public.delivery_partner_complete_delivery(uuid, text, text) to authenticated, service_role;
+grant execute on function public.delivery_partner_deliver(uuid, text, text) to authenticated, service_role;
+grant execute on function public.delivery_partner_mark_picked_up(uuid, text) to authenticated, service_role;
+grant execute on function public.delivery_partner_pickup(uuid, text) to authenticated, service_role;
+-- delivery_partner_respond_assignment is already authenticated/service_role only.
+
+commit;

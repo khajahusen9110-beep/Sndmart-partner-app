@@ -57,7 +57,6 @@ fun AuthScreen(
     var passwordVisible by remember { mutableStateOf(false) }
     var confirmPasswordVisible by remember { mutableStateOf(false) }
 
-    var showConfigDialog by remember { mutableStateOf(false) }
     var showForgotPasswordDialog by remember { mutableStateOf(false) }
 
     // Resend OTP cooldown timer
@@ -101,17 +100,6 @@ fun AuthScreen(
                     }
                 } else {
                     Spacer(modifier = Modifier.size(48.dp))
-                }
-
-                IconButton(
-                    onClick = { showConfigDialog = true },
-                    modifier = Modifier.testTag("backend_config_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Settings,
-                        contentDescription = "Backend Settings",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
             }
 
@@ -724,16 +712,23 @@ fun AuthScreen(
         }
     }
 
-    // Forgot Password Dialog
+    // Forgot Password: SMS code to the registered number, then a new password.
     if (showForgotPasswordDialog) {
         var forgotMobile by remember { mutableStateOf(mobileInput) }
+        var codeSent by remember { mutableStateOf(false) }
+        var resetOtp by remember { mutableStateOf("") }
+        var newPassword by remember { mutableStateOf("") }
         AlertDialog(
-            onDismissRequest = { showForgotPasswordDialog = false },
+            onDismissRequest = { if (!isActionLoading) showForgotPasswordDialog = false },
             title = { Text("Reset Password") },
             text = {
                 Column {
                     Text(
-                        text = "Enter your registered 10-digit mobile number to receive an SMS verification code to reset your password.",
+                        text = if (!codeSent) {
+                            "Enter your registered 10-digit mobile number. We will send an SMS code to reset your password."
+                        } else {
+                            "Enter the 6-digit code sent to +91 $forgotMobile and choose a new password."
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -748,6 +743,7 @@ fun AuthScreen(
                                 digits.take(10)
                             }
                         },
+                        enabled = !codeSent,
                         label = { Text("Mobile Number (10 digits)") },
                         prefix = { Text("+91 ", fontWeight = FontWeight.Bold, color = EmeraldPrimary) },
                         leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null, tint = EmeraldPrimary) },
@@ -755,96 +751,58 @@ fun AuthScreen(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                         modifier = Modifier.fillMaxWidth()
                     )
+                    if (codeSent) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        OutlinedTextField(
+                            value = resetOtp,
+                            onValueChange = { resetOtp = it.filter { c -> c.isDigit() }.take(6) },
+                            label = { Text("SMS Code") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        OutlinedTextField(
+                            value = newPassword,
+                            onValueChange = { newPassword = it },
+                            label = { Text("New Password (min 6 characters)") },
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
             },
             confirmButton = {
                 Button(
+                    enabled = !isActionLoading,
                     onClick = {
-                        if (forgotMobile.length == 10) {
-                            viewModel.requestPhoneOtp(forgotMobile)
-                            showForgotPasswordDialog = false
-                        } else {
-                            viewModel.showMessage("Please enter a valid 10-digit mobile number")
+                        when {
+                            forgotMobile.length != 10 ->
+                                viewModel.showMessage("Please enter a valid 10-digit mobile number")
+                            !codeSent ->
+                                viewModel.requestPasswordReset(forgotMobile) { sent -> codeSent = sent }
+                            resetOtp.length != 6 ->
+                                viewModel.showMessage("Please enter the 6-digit SMS code")
+                            newPassword.length < 6 ->
+                                viewModel.showMessage("Password must be at least 6 characters long")
+                            else ->
+                                viewModel.resetPasswordWithOtp(forgotMobile, resetOtp, newPassword) { ok ->
+                                    if (ok) showForgotPasswordDialog = false
+                                }
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
                 ) {
-                    Text("Send SMS Code")
+                    Text(if (codeSent) "Reset Password" else "Send SMS Code")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showForgotPasswordDialog = false }) {
+                TextButton(onClick = { showForgotPasswordDialog = false }, enabled = !isActionLoading) {
                     Text("Cancel")
                 }
             }
         )
     }
-
-    // Supabase Config Dialog
-    if (showConfigDialog) {
-        SupabaseConfigDialog(
-            currentUrl = viewModel.prefs.customSupabaseUrl,
-            currentKey = viewModel.prefs.customSupabaseKey,
-            onDismiss = { showConfigDialog = false },
-            onSave = { url, key ->
-                viewModel.updateSupabaseCredentials(url, key)
-                showConfigDialog = false
-            }
-        )
-    }
-}
-
-
-@Composable
-fun SupabaseConfigDialog(
-    currentUrl: String,
-    currentKey: String,
-    onDismiss: () -> Unit,
-    onSave: (String, String) -> Unit
-) {
-    var url by remember { mutableStateOf(currentUrl) }
-    var key by remember { mutableStateOf(currentKey) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Supabase Backend Settings") },
-        text = {
-            Column {
-                Text(
-                    text = "Connected Project: Sndmart (ref: zennmoughfhennwgecgo)",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = url,
-                    onValueChange = { url = it },
-                    label = { Text("Supabase URL") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(modifier = Modifier.height(10.dp))
-                OutlinedTextField(
-                    value = key,
-                    onValueChange = { key = it },
-                    label = { Text("Anon API Key") },
-                    maxLines = 3,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = { onSave(url, key) },
-                colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
-            ) {
-                Text("Save & Apply")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        }
-    )
 }

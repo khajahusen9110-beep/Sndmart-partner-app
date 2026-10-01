@@ -17,37 +17,55 @@ android {
     applicationId = "com.sndmart.delivery"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    // CI passes VERSION_CODE / VERSION_NAME; local builds fall back to the defaults below.
+    // VERSION_NAME is also what the force-update check compares against app_versions.
+    // 1.1.0 = RPC-only release. Every partner must be on it before the Phase 2 migration.
+    versionCode = (System.getenv("VERSION_CODE") ?: "2").toInt()
+    versionName = System.getenv("VERSION_NAME") ?: "1.1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-    manifestPlaceholders["GOOGLE_MAPS_API_KEY"] = "YOUR_GOOGLE_MAPS_API_KEY"
   }
 
+  val releaseKeystore = file(System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks")
+  val hasReleaseSigning =
+    releaseKeystore.exists() &&
+      !System.getenv("STORE_PASSWORD").isNullOrBlank() &&
+      !System.getenv("KEY_PASSWORD").isNullOrBlank()
+  val sharedDebugKeystore = file("${rootDir}/debug.keystore")
+
   signingConfigs {
-    create("release") {
-      val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
-      storeFile = file(keystorePath)
-      storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
-      keyPassword = System.getenv("KEY_PASSWORD")
+    if (hasReleaseSigning) {
+      create("release") {
+        storeFile = releaseKeystore
+        storePassword = System.getenv("STORE_PASSWORD")
+        keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
+        keyPassword = System.getenv("KEY_PASSWORD")
+      }
     }
-    create("debugConfig") {
-      storeFile = file("${rootDir}/debug.keystore")
-      storePassword = "android"
-      keyAlias = "androiddebugkey"
-      keyPassword = "android"
+    // Optional team-shared debug keystore (keeps the Maps/Firebase SHA-1 stable across machines).
+    // Without it, the Android default debug keystore is used.
+    if (sharedDebugKeystore.exists()) {
+      create("debugConfig") {
+        storeFile = sharedDebugKeystore
+        storePassword = "android"
+        keyAlias = "androiddebugkey"
+        keyPassword = "android"
+      }
     }
   }
 
   buildTypes {
     release {
       isCrunchPngs = false
+      // R8 stays off until the release build has been smoke-tested with minification
+      // (Moshi reflection + Retrofit need the keep rules in proguard-rules.pro).
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      signingConfig = signingConfigs.getByName("release")
+      if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")
     }
-    debug { signingConfig = signingConfigs.getByName("debugConfig") }
+    debug {
+      if (sharedDebugKeystore.exists()) signingConfig = signingConfigs.getByName("debugConfig")
+    }
   }
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11
@@ -93,8 +111,6 @@ dependencies {
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.androidx.lifecycle.viewmodel.compose)
   implementation(libs.androidx.navigation.compose)
-  implementation(libs.androidx.room.ktx)
-  implementation(libs.androidx.room.runtime)
   implementation(libs.coil.compose)
   implementation(libs.converter.moshi)
   implementation(libs.kotlinx.coroutines.android)
@@ -121,6 +137,5 @@ dependencies {
   androidTestImplementation(libs.androidx.runner)
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
-  "ksp"(libs.androidx.room.compiler)
   "ksp"(libs.moshi.kotlin.codegen)
 }

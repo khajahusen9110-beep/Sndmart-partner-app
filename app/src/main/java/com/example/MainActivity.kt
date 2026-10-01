@@ -93,7 +93,6 @@ class MainActivity : ComponentActivity() {
 fun MainAppRoot(viewModel: MainViewModel) {
     val authState by viewModel.authUiState.collectAsState()
     val userMessage by viewModel.userMessage.collectAsState()
-    val incomingAlert by viewModel.incomingAssignmentAlert.collectAsState()
     val selectedAssignment by viewModel.selectedAssignmentForDetail.collectAsState()
     val notifications by viewModel.notifications.collectAsState()
     val dataFetchError by viewModel.dataFetchError.collectAsState()
@@ -210,7 +209,7 @@ fun MainAppRoot(viewModel: MainViewModel) {
                                 isOnline = partner.isOnline,
                                 isAvailable = partner.isAvailable,
                                 isGpsActive = viewModel.isTrackingLocation.collectAsState().value,
-                                unreadNotifCount = notifications.size,
+                                unreadNotifCount = notifications.count { !it.isRead },
                                 onNotificationsClick = { showNotificationsSheet = true },
                                 onRefreshClick = { viewModel.refreshAllData() }
                             )
@@ -352,6 +351,18 @@ fun MainAppRoot(viewModel: MainViewModel) {
                     }
                 }
             }
+        }
+
+        // Screens outside the main tab scaffold have no snackbar host of their own.
+        val showsTabScaffold = authState is AuthUiState.Authenticated && selectedAssignment == null
+        if (!showsTabScaffold) {
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier
+                    .align(androidx.compose.ui.Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .imePadding()
+            )
         }
 
         // Notifications Bottom Sheet

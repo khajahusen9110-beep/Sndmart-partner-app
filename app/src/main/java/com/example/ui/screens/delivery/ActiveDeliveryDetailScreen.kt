@@ -38,6 +38,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.example.BuildConfig
 import com.example.data.model.DeliveryAssignment
 import com.example.data.model.OrderItem
 import com.example.data.model.UploadState
@@ -45,6 +46,7 @@ import com.example.ui.MainViewModel
 import com.example.ui.components.*
 import com.example.ui.theme.*
 import com.example.util.ImageUtils
+import com.example.util.isCashOnDelivery
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
 import java.text.SimpleDateFormat
@@ -488,14 +490,14 @@ fun ActiveDeliveryDetailScreen(
                             )
                         }
                         Surface(
-                            color = if (assignment.paymentMode.equals("COD", ignoreCase = true)) AmberContainer else EmeraldContainer,
+                            color = if (isCashOnDelivery(assignment.paymentMode)) AmberContainer else EmeraldContainer,
                             shape = RoundedCornerShape(6.dp)
                         ) {
                             Text(
-                                text = if (assignment.paymentMode.equals("COD", ignoreCase = true)) "COLLECT CASH: ₹${assignment.totalAmount.toInt()}" else "PREPAID ORDER",
+                                text = if (isCashOnDelivery(assignment.paymentMode)) "COLLECT CASH: ₹${assignment.totalAmount.toInt()}" else "PREPAID ORDER",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontWeight = FontWeight.Bold,
-                                    color = if (assignment.paymentMode.equals("COD", ignoreCase = true)) AmberOnContainer else EmeraldOnContainer
+                                    color = if (isCashOnDelivery(assignment.paymentMode)) AmberOnContainer else EmeraldOnContainer
                                 ),
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                             )
@@ -1101,7 +1103,7 @@ fun ActiveDeliveryDetailScreen(
                                         photoUrl = currentDropPhotoPath
                                     ) { success ->
                                         if (success) {
-                                            if (assignment.paymentMode == "COD") {
+                                            if (isCashOnDelivery(assignment.paymentMode)) {
                                                 showCodCashDialog = true
                                             } else {
                                                 onBack()
@@ -1145,7 +1147,7 @@ fun ActiveDeliveryDetailScreen(
                             Icon(Icons.Default.CheckCircle, contentDescription = null, tint = EmeraldPrimary, modifier = Modifier.size(48.dp))
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(text = "Order Successfully Delivered!", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = EmeraldOnContainer))
-                            Text(text = "+₹${assignment.deliveryFee.toInt()} Net Payout Credited", style = MaterialTheme.typography.bodyMedium, color = EmeraldOnContainer)
+                            Text(text = "Your earning for this order will appear in Earnings shortly.", style = MaterialTheme.typography.bodyMedium, color = EmeraldOnContainer)
                         }
                     }
                 }
@@ -1160,13 +1162,13 @@ fun ActiveDeliveryDetailScreen(
                 onBack()
             },
             icon = { Icon(Icons.Default.Payments, contentDescription = null, tint = AmberAccent, modifier = Modifier.size(36.dp)) },
-            title = { Text("Cash On Delivery Collected") },
+            title = { Text("Collect Cash: ₹${assignment.totalAmount.toInt()}") },
             text = {
                 Column {
-                    Text("Did you collect ₹${assignment.totalAmount.toInt()} in cash from customer ${assignment.customerName}?")
+                    Text("Please make sure you have collected ₹${assignment.totalAmount.toInt()} in cash from ${assignment.customerName}.")
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        "This entry will be recorded in your Cash Ledger until remitted at Sndmart Hub.",
+                        "It has been added to your Cash Ledger automatically. Hand it over at the Sndmart hub and request a remittance from Earnings.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.outline
                     )
@@ -1175,18 +1177,12 @@ fun ActiveDeliveryDetailScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        viewModel.logCashCollected(
-                            orderId = assignment.orderId,
-                            orderNumber = assignment.orderNumber,
-                            amount = assignment.totalAmount,
-                            notes = "COD collected for ${assignment.orderNumber}"
-                        )
                         showCodCashDialog = false
                         onBack()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
                 ) {
-                    Text("Confirm ₹${assignment.totalAmount.toInt()} Received")
+                    Text("OK, Cash Collected")
                 }
             }
         )
@@ -1234,7 +1230,7 @@ fun ActiveDeliveryDetailScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Choose from Gallery")
                     }
-                    TextButton(
+                    if (BuildConfig.DEBUG) TextButton(
                         onClick = {
                             showPickupPhotoOptionsDialog = false
                             uploadDemoPickupPhoto()
@@ -1298,7 +1294,7 @@ fun ActiveDeliveryDetailScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Choose from Gallery")
                     }
-                    TextButton(
+                    if (BuildConfig.DEBUG) TextButton(
                         onClick = {
                             showDropPhotoOptionsDialog = false
                             uploadDemoDropPhoto()

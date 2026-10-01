@@ -13,15 +13,19 @@ import android.os.Build
 import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.BuildConfig
 import com.example.MainActivity
 import com.example.R
-import com.example.data.local.AppDatabase
 import com.example.data.local.AppPreferences
 import com.example.data.location.LocationTracker
 import com.example.data.model.*
 import com.example.data.remote.SupabaseRepository
 import com.example.service.DeliveryPartnerFcmService
 import com.example.service.SndmartFirebaseMessagingService
+import com.example.util.availableForPayout
+import com.example.util.cashInHand
+import com.example.util.pendingHandover
+import com.example.util.todayEarnings
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
@@ -38,9 +42,8 @@ sealed interface AuthUiState {
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     val prefs = AppPreferences(application)
-    private val database = AppDatabase.getInstance(application)
     val repository = SupabaseRepository.getInstance(application)
-    val locationTracker = LocationTracker(application, repository)
+    val locationTracker = LocationTracker.getInstance(application)
 
     private val _authUiState = MutableStateFlow<AuthUiState>(AuthUiState.Loading)
     val authUiState: StateFlow<AuthUiState> = _authUiState.asStateFlow()
@@ -117,21 +120,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    /** (today's net earnings, today's deliveries, today's pending earnings) */
     val todayEarningsSummary = earnings.map { list ->
-        val todayTotal = list.sumOf { it.netEarning }
-        val todayDelivered = list.size
-        val pendingCount = list.count { it.status == "pending" }
-        Triple(todayTotal, todayDelivered, pendingCount)
+        val summary = todayEarnings(list)
+        Triple(summary.total, summary.deliveries, summary.pending)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), Triple(0.0, 0, 0))
 
-    val cashInHandBalance = cashLedger.map { list ->
-        val collected = list.filter { it.entryType == "collected" }.sumOf { it.amount }
-        val remitted = list.filter { it.entryType == "remitted" }.sumOf { it.amount }
-        collected - remitted
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+    val availablePayoutBalance = combine(earnings, paymentRequests) { e, r -> availableForPayout(e, r) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+
+    val cashInHandBalance = cashLedger.map { cashInHand(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+
+    val pendingHandoverBalance = cashLedger.map { pendingHandover(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
     companion object {
-        const val CURRENT_APP_VERSION = "1.0.0"
+        const val CURRENT_APP_VERSION = BuildConfig.VERSION_NAME
 
         fun compareVersions(a: String, b: String): Int {
             val pa = a.split('.').map { it.trim().toIntOrNull() ?: 0 }
@@ -165,13 +170,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         repository.onSessionExpired = { reason ->
-            viewModelScope.launch {
-                locationTracker.stopTracking()
-                repository.clearData()
-                prefs.clearSession()
-                _authUiState.value = AuthUiState.Unauthenticated
-                showMessage(reason)
-            }
+            viewModelScope.launch { endSession(reason) }
         }
         runStartupChecks()
         checkInitialSession()
@@ -232,11 +231,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if ((!token.isNullOrBlank() || !refreshToken.isNullOrBlank()) && !userId.isNullOrBlank()) {
                 val sessionValid = repository.ensureValidSession().isSuccess
                 if (!sessionValid) {
-                    locationTracker.stopTracking()
-                    repository.clearData()
-                    prefs.clearSession()
-                    _authUiState.value = AuthUiState.Unauthenticated
-                    showMessage("Your session expired, please log in again")
+                    endSession("Your session expired, please log in again")
                     return@launch
                 }
                 val partner = repository.checkPartnerProfile(userId, prefs.userEmail ?: "", prefs.userPhone ?: "")
@@ -256,11 +251,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (_authUiState.value is AuthUiState.Authenticated || _authUiState.value is AuthUiState.UnderReview) {
                 val sessionValid = repository.ensureValidSession().isSuccess
                 if (!sessionValid) {
-                    locationTracker.stopTracking()
-                    repository.clearData()
-                    prefs.clearSession()
-                    _authUiState.value = AuthUiState.Unauthenticated
-                    showMessage("Your session expired, please log in again")
+                    endSession("Your session expired, please log in again")
                 } else {
                     repository.fetchAllBackendData()
                 }
@@ -281,8 +272,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             else -> {
                 _authUiState.value = AuthUiState.Authenticated(partner)
                 if (partner.isOnline) {
-                    locationTracker.startTracking()
+                    if (locationTracker.hasLocationPermission()) {
+                        locationTracker.startTracking()
+                    } else {
+                        // Online on the server but we cannot share location: go offline so
+                        // dispatch does not assign orders to a partner it cannot see.
+                        toggleOffline()
+                    }
                 }
+                repository.startRealtimeWatcher()
                 loadAllBackendData()
             }
         }
@@ -472,15 +470,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun requestPhoneOtp(phone: String, onSent: (Boolean) -> Unit = {}) {
+    fun requestPasswordReset(phone: String, onSent: (Boolean) -> Unit) {
         viewModelScope.launch {
             _isActionLoading.value = true
-            val res = repository.requestOtp(phone)
+            val res = repository.requestPasswordResetOtp(phone.trim())
             _isActionLoading.value = false
-            onSent(res.isSuccess)
-            if (res.isSuccess) {
-                showMessage("OTP sent to $phone")
+            res.onSuccess {
+                showMessage("Reset code sent to ${repository.formatE164Phone(phone)}")
+            }.onFailure {
+                showMessage(it.message ?: "Could not send reset code")
             }
+            onSent(res.isSuccess)
+        }
+    }
+
+    fun resetPasswordWithOtp(phone: String, otp: String, newPassword: String, onDone: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            _isActionLoading.value = true
+            val res = repository.resetPasswordWithOtp(phone.trim(), otp.trim(), newPassword)
+            _isActionLoading.value = false
+            res.onSuccess { partner ->
+                showMessage("Password updated. You are now signed in.")
+                if (partner == null) _authUiState.value = AuthUiState.OnboardingRequired
+                else updateAuthStateForPartner(partner)
+            }.onFailure {
+                showMessage(it.message ?: "Could not reset password")
+            }
+            onDone(res.isSuccess)
         }
     }
 
@@ -511,21 +527,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return repository.uploadKycDocument(documentType, bytes)
     }
 
-    fun skipOtpAndProceedToOnboarding(email: String) {
-        val cleanEmail = email.trim().ifBlank { "partner@sndmart.com" }
-        prefs.userEmail = cleanEmail
-        val currentUid = prefs.userId
-        val validUid = if (!currentUid.isNullOrBlank() && currentUid.matches(Regex("^[0-9a-fA-F-]{36}$"))) {
-            currentUid
-        } else {
-            val generated = java.util.UUID.nameUUIDFromBytes("sndmart_partner_$cleanEmail".toByteArray()).toString()
-            prefs.userId = generated
-            generated
-        }
-        _authUiState.value = AuthUiState.OnboardingRequired
-        showMessage("Proceeding to Partner Registration KYC")
-    }
-
     suspend fun getFreshAuthUserId(): String? {
         return repository.getFreshAuthUser().getOrNull() ?: prefs.userId
     }
@@ -535,7 +536,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         phone: String,
         vehicleType: String,
         vehicleNumber: String,
-        cityId: String = "a5cd2248-f0f9-41b4-ad54-a31293a8257f",
+        cityId: String,
         aadharUrl: String?,
         licenceUrl: String?
     ) {
@@ -569,7 +570,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val res = repository.requestCashRemittance(amount, note)
             _isActionLoading.value = false
             res.onSuccess {
-                showMessage("Remittance request for ₹${amount.toInt()} submitted to darkstore hub!")
+                showMessage("Cash handover of ₹${formatRupees(amount)} sent. Waiting for hub confirmation.")
             }.onFailure {
                 showMessage(it.message ?: "Failed to submit remittance request")
             }
@@ -579,11 +580,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun goOnlineWithLocation() {
         viewModelScope.launch {
             _isActionLoading.value = true
-            // 1. Immediately get current GPS coordinates
-            val (lat, lng) = locationTracker.getCurrentGpsLocation()
-            Log.i("MainViewModel", "Going online with GPS coordinates: lat=$lat, lng=$lng")
-            
-            // 2. Immediately write location, timestamp, and is_online to database
+            // Dispatch assigns by distance, so a real GPS fix is required to go online.
+            val fix = locationTracker.getCurrentGpsLocation()
+            if (fix == null) {
+                _isActionLoading.value = false
+                showMessage("Unable to get your GPS location. Turn on location services and try again.")
+                return@launch
+            }
+            val (lat, lng) = fix
             val res = repository.setOnline(isOnline = true, lat = lat, lng = lng)
             _isActionLoading.value = false
             res.onSuccess {
@@ -600,11 +604,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     )
                 }
-                // 3. Start continuous tracking (every 20s)
                 locationTracker.startTracking(updateIntervalSeconds = 20L)
                 showMessage("You are now ONLINE. Live GPS location active.")
             }.onFailure { err ->
-                showMessage("Failed to go online: ${err.message ?: "Network error"}")
+                showMessage(err.message ?: "Failed to go online")
             }
         }
     }
@@ -622,7 +625,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 showMessage("You are now OFFLINE")
             }.onFailure { err ->
-                showMessage("Failed to go offline: ${err.message ?: "Network error"}")
+                showMessage(err.message ?: "Failed to go offline")
             }
         }
     }
@@ -652,15 +655,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     _authUiState.value = AuthUiState.Authenticated(current.partner.copy(isAvailable = available))
                 }
                 showMessage(if (available) "Status: AVAILABLE for deliveries" else "Status: BUSY (Paused new orders)")
+            }.onFailure {
+                showMessage(it.message ?: "Could not change availability")
             }
         }
     }
 
     fun dismissIncomingAlert(assignmentId: String) {
+        DeliveryPartnerFcmService.stopAlertSound()
         repository.dismissIncomingAlert(assignmentId)
     }
 
     fun acceptOrder(assignment: DeliveryAssignment) {
+        DeliveryPartnerFcmService.stopAlertSound()
         viewModelScope.launch {
             _isActionLoading.value = true
             val res = repository.respondToAssignment(
@@ -678,12 +685,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 showMessage("Order accepted! Navigating to active delivery.")
             }.onFailure { error ->
                 Log.e("MainViewModel", "Accept order error: ${error.message}", error)
-                showMessage("Accept order error: ${error.message ?: "Failed to accept order"}")
+                showMessage(error.message ?: "Failed to accept order")
             }
         }
     }
 
     fun rejectOrder(assignmentId: String) {
+        DeliveryPartnerFcmService.stopAlertSound()
         viewModelScope.launch {
             _isActionLoading.value = true
             val res = repository.respondToAssignment(assignmentId, accept = false)
@@ -693,7 +701,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 showMessage("Order declined")
             }.onFailure { error ->
                 Log.e("MainViewModel", "Reject order error: ${error.message}", error)
-                showMessage("Failed to decline order: ${error.message ?: "Unknown error"}")
+                showMessage(error.message ?: "Failed to decline order")
             }
         }
     }
@@ -745,20 +753,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 Result.failure(Exception(err))
             } else {
                 val photoPath = uploadRes.getOrThrow()
-                val updateRes = repository.updatePickupPhotoUrl(assignmentId, photoPath)
+                // Saved to the assignment by the pickup RPC when the partner confirms pickup.
+                repository.rememberPickupPhoto(assignmentId, photoPath)
                 _isActionLoading.value = false
-                if (updateRes.isFailure) {
-                    val err = updateRes.exceptionOrNull()?.message ?: "Failed to save photo to order record."
-                    Log.e("MainViewModel", "Update pickup_photo_url failed: $err")
-                    _pickupPhotoUploadState.value = UploadState.Error(err)
-                    showMessage(err)
-                    Result.failure(Exception(err))
-                } else {
-                    _selectedAssignmentForDetail.update { it?.copy(pickupPhotoUrl = photoPath) }
-                    _pickupPhotoUploadState.value = UploadState.Success(photoPath)
-                    showMessage("Pickup photo uploaded successfully!")
-                    Result.success(photoPath)
-                }
+                _selectedAssignmentForDetail.update { it?.copy(pickupPhotoUrl = photoPath) }
+                _pickupPhotoUploadState.value = UploadState.Success(photoPath)
+                showMessage("Pickup photo uploaded successfully!")
+                Result.success(photoPath)
             }
         } catch (e: Exception) {
             val err = e.message ?: "Upload failed. Please try again."
@@ -798,20 +799,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 Result.failure(Exception(err))
             } else {
                 val photoPath = uploadRes.getOrThrow()
-                val updateRes = repository.updateDeliveredPhotoUrl(assignmentId, photoPath)
+                // Saved to the assignment by the deliver RPC together with the OTP check.
+                repository.rememberDeliveredPhoto(assignmentId, photoPath)
                 _isActionLoading.value = false
-                if (updateRes.isFailure) {
-                    val err = updateRes.exceptionOrNull()?.message ?: "Failed to save delivery proof."
-                    Log.e("MainViewModel", "Update delivered_photo_url failed: $err")
-                    _dropPhotoUploadState.value = UploadState.Error(err)
-                    showMessage(err)
-                    Result.failure(Exception(err))
-                } else {
-                    _selectedAssignmentForDetail.update { it?.copy(deliveredPhotoUrl = photoPath) }
-                    _dropPhotoUploadState.value = UploadState.Success(photoPath)
-                    showMessage("Delivery proof photo uploaded successfully!")
-                    Result.success(photoPath)
-                }
+                _selectedAssignmentForDetail.update { it?.copy(deliveredPhotoUrl = photoPath) }
+                _dropPhotoUploadState.value = UploadState.Success(photoPath)
+                showMessage("Delivery proof photo uploaded successfully!")
+                Result.success(photoPath)
             }
         } catch (e: Exception) {
             val err = e.message ?: "Upload failed. Please try again."
@@ -844,29 +838,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 showMessage("Order marked as Picked Up!")
             }.onFailure { err ->
                 Log.e("MainViewModel", "Confirm pickup error: ${err.message}", err)
-                showMessage("Confirm pickup error: ${err.message ?: "Failed to mark picked up"}")
+                showMessage(err.message ?: "Failed to mark picked up")
             }
         }
     }
 
     fun startDelivery(assignmentId: String) {
-        viewModelScope.launch {
-            val res = repository.startDelivery(assignmentId)
-            res.onSuccess {
-                _selectedAssignmentForDetail.update { it?.copy(status = "out_for_delivery") }
-                showMessage("Out for Delivery! Head to customer location.")
-            }
-        }
+        repository.startDelivery(assignmentId)
+        _selectedAssignmentForDetail.update { it?.copy(status = "out_for_delivery") }
+        showMessage("Out for Delivery! Head to customer location.")
     }
 
     fun arriveAtDrop(assignmentId: String) {
-        viewModelScope.launch {
-            val res = repository.arriveAtDrop(assignmentId)
-            res.onSuccess {
-                _selectedAssignmentForDetail.update { it?.copy(status = "arrived_drop") }
-                showMessage("Arrived at drop location. Enter delivery OTP.")
-            }
-        }
+        repository.arriveAtDrop(assignmentId)
+        _selectedAssignmentForDetail.update { it?.copy(status = "arrived_drop") }
+        showMessage("Arrived at drop location. Enter delivery OTP.")
     }
 
     fun completeDelivery(assignmentId: String, otp: String, photoUrl: String, onCompleted: (Boolean) -> Unit) {
@@ -875,20 +861,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val res = repository.completeDelivery(assignmentId, otp, photoUrl)
             _isActionLoading.value = false
             res.onSuccess {
-                _selectedAssignmentForDetail.value = null
-                showMessage("Order Delivered successfully! ₹ credited.")
+                _selectedAssignmentForDetail.update { it?.copy(status = "delivered") }
+                showMessage("Order delivered successfully! Earnings will update shortly.")
                 onCompleted(true)
             }.onFailure {
                 showMessage(it.message ?: "Failed to verify OTP. Please try again.")
                 onCompleted(false)
             }
-        }
-    }
-
-    fun logCashCollected(orderId: String, orderNumber: String, amount: Double, notes: String) {
-        viewModelScope.launch {
-            repository.logCashCollected(orderId, orderNumber, amount, notes)
-            showMessage("Recorded ₹${amount.toInt()} cash collected into ledger")
         }
     }
 
@@ -905,89 +884,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun registerFcmToken(token: String) {
-        viewModelScope.launch {
-            prefs.fcmDeviceToken = token
-            _fcmTokenState.value = token
-            repository.registerDeviceToken(token)
-            showMessage("Push token registered: ${token.take(12)}...")
-        }
-    }
-
+    /**
+     * Fetches the real FCM token and registers it in device_tokens. Without Google Play
+     * Services there is no push channel; polling still delivers new orders while online.
+     */
     fun fetchAndRegisterFcmToken(showToast: Boolean = false) {
         val app = getApplication<Application>()
-        val cached = prefs.fcmDeviceToken
-        if (cached.isNotBlank()) {
-            _fcmTokenState.value = cached
-            viewModelScope.launch {
-                val res = repository.registerDeliveryPartnerFcmToken(cached)
-                if (res.isSuccess) {
-                    prefs.isFcmRegistered = true
-                    _isFcmOnline.value = true
-                }
-            }
-        }
-
-        val availability = com.google.android.gms.common.GoogleApiAvailability.getInstance()
-        val resultCode = availability.isGooglePlayServicesAvailable(app)
-        val hasPlayServices = resultCode == com.google.android.gms.common.ConnectionResult.SUCCESS
-
-        if (!hasPlayServices) {
-            Log.w("MainViewModel", "Google Play Services not available (code: $resultCode). Using persistent local device token.")
-            if (showToast) {
-                showMessage("Device registered for order alerts: ${cached.take(16)}...")
-            }
+        val playServices = com.google.android.gms.common.GoogleApiAvailability.getInstance()
+            .isGooglePlayServicesAvailable(app) == com.google.android.gms.common.ConnectionResult.SUCCESS
+        if (!playServices) {
+            _isFcmOnline.value = false
+            if (showToast) showMessage("Push alerts need Google Play Services. Orders will still sync while online.")
             return
         }
 
         try {
             FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
-                try {
-                    if (task.isSuccessful && !task.result.isNullOrBlank()) {
-                        val token = task.result!!
-                        Log.i("MainViewModel", "Fetched FCM token: $token")
-                        prefs.fcmDeviceToken = token
-                        _fcmTokenState.value = token
-                        viewModelScope.launch {
-                            val res = repository.registerDeliveryPartnerFcmToken(token)
-                            if (res.isSuccess) {
-                                prefs.isFcmRegistered = true
-                                _isFcmOnline.value = true
-                                Log.i("MainViewModel", "FCM token registered with device_tokens (firebase_project=native)")
-                                if (showToast) {
-                                    showMessage("Device registered for order alerts!")
-                                }
-                            } else {
-                                Log.w("MainViewModel", "Failed to register FCM token: ${res.exceptionOrNull()?.message}")
-                                if (showToast) {
-                                    showMessage("Order alerts synced with local device token")
-                                }
-                            }
-                        }
-                    } else {
-                        val errorMsg = task.exception?.message ?: "Registration unavailable"
-                        Log.w("MainViewModel", "FCM token retrieval failed: $errorMsg. Falling back to active local token.")
-                        // Gracefully maintain registered fallback token
-                        viewModelScope.launch {
-                            val res = repository.registerDeliveryPartnerFcmToken(cached)
-                            if (res.isSuccess) {
-                                prefs.isFcmRegistered = true
-                                _isFcmOnline.value = true
-                            }
-                        }
-                        if (showToast) {
-                            showMessage("Device alerts active (Token: ${cached.take(16)}...)")
-                        }
+                val token = if (task.isSuccessful) task.result.orEmpty() else ""
+                if (token.isBlank()) {
+                    Log.w("MainViewModel", "FCM token unavailable: ${task.exception?.message}")
+                    _isFcmOnline.value = false
+                    if (showToast) showMessage("Could not enable push alerts. Check your internet connection.")
+                    return@addOnCompleteListener
+                }
+                prefs.fcmDeviceToken = token
+                _fcmTokenState.value = token
+                viewModelScope.launch {
+                    val res = repository.registerDeliveryPartnerFcmToken(token)
+                    _isFcmOnline.value = res.isSuccess
+                    if (showToast) {
+                        showMessage(
+                            if (res.isSuccess) "Device registered for order alerts!"
+                            else "Order alert registration failed: ${res.exceptionOrNull()?.message}"
+                        )
                     }
-                } catch (e: Exception) {
-                    Log.w("MainViewModel", "FCM token handling error: ${e.message}")
                 }
             }
         } catch (e: Exception) {
-            Log.w("MainViewModel", "FirebaseMessaging exception: ${e.message}")
-            if (showToast) {
-                showMessage("Device registered for alerts: ${cached.take(16)}...")
-            }
+            Log.w("MainViewModel", "FirebaseMessaging unavailable: ${e.message}")
+            _isFcmOnline.value = false
         }
     }
 
@@ -1149,7 +1084,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 showMessage("Bank details saved successfully")
             }.onFailure {
-                showMessage("Failed to save bank details: ${it.message}")
+                showMessage(it.message ?: "Failed to save bank details")
             }
         }
     }
@@ -1165,13 +1100,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun dismissIncomingAlert() {
+        DeliveryPartnerFcmService.stopAlertSound()
         repository.dismissIncomingAlert()
     }
 
-    fun updateSupabaseCredentials(url: String, key: String) {
-        repository.updateSupabaseConfig(url, key)
-        showMessage("Supabase endpoints updated!")
-    }
+    private fun formatRupees(amount: Double): String =
+        if (amount % 1.0 == 0.0) amount.toLong().toString() else String.format(java.util.Locale.US, "%.2f", amount)
 
     fun showMessage(msg: String) {
         _userMessage.value = msg
@@ -1191,16 +1125,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun signOut() {
         viewModelScope.launch {
-            try {
-                repository.deactivateDeviceToken()
-            } catch (e: Exception) {
-                // Ignore failure on logout
+            if (locationTracker.isTracking.value) {
+                repository.setOnline(isOnline = false)
             }
-            locationTracker.stopTracking()
-            repository.clearData()
-            prefs.clearSession()
-            _authUiState.value = AuthUiState.Unauthenticated
-            showMessage("Signed out successfully")
+            // Must run while the session is still valid, otherwise pushes keep coming.
+            repository.deactivateDeviceToken()
+            endSession("Signed out successfully")
         }
+    }
+
+    private fun endSession(message: String) {
+        DeliveryPartnerFcmService.stopAlertSound()
+        locationTracker.stopTracking()
+        repository.clearData()
+        prefs.clearSession()
+        _isFcmOnline.value = false
+        _selectedAssignmentForDetail.value = null
+        _authUiState.value = AuthUiState.Unauthenticated
+        showMessage(message)
     }
 }
