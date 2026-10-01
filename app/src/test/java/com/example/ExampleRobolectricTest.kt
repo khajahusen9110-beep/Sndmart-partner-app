@@ -9,7 +9,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+// Robolectric 4.16.1 has no API 36 runtime yet; 35 is the newest supported.
+@Config(sdk = [35])
 class ExampleRobolectricTest {
 
   @Test
