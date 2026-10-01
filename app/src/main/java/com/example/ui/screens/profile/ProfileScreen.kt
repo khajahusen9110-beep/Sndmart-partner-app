@@ -316,12 +316,12 @@ fun ProfileScreen(
                         )
                     }
                     Surface(
-                        color = if isFcmOnline EmeraldPrimary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.error.copy(alpha = 0.15f),
+                        color = if (isFcmOnline) EmeraldPrimary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.error.copy(alpha = 0.15f),
                         shape = RoundedCornerShape(50)
                     ) {
                         Text(
-                            text = if isFcmOnline "ACTIVE" else "STANDBY",
-                            color = if isFcmOnline EmeraldPrimary else MaterialTheme.colorScheme.error,
+                            text = if (isFcmOnline) "ACTIVE" else "STANDBY",
+                            color = if (isFcmOnline) EmeraldPrimary else MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                         )
