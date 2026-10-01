@@ -9,6 +9,20 @@ plugins {
   alias(libs.plugins.google.services)
 }
 
+/** Reads KEY=value from .env, falling back to .env.example (same files the secrets plugin uses). */
+fun envFileValue(key: String): String? =
+  listOf(".env", ".env.example")
+    .map { rootProject.file(it) }
+    .filter { it.exists() }
+    .firstNotNullOfOrNull { file ->
+      file.readLines()
+        .map { it.trim() }
+        .firstOrNull { it.startsWith("$key=") }
+        ?.substringAfter("=")
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+    }
+
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -24,6 +38,10 @@ android {
     versionName = System.getenv("VERSION_NAME") ?: "1.1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    // The manifest needs this placeholder in every variant (including unit-test manifests);
+    // CI env > .env > .env.example.
+    manifestPlaceholders["GOOGLE_MAPS_API_KEY"] =
+      System.getenv("GOOGLE_MAPS_API_KEY")?.takeIf { it.isNotBlank() } ?: envFileValue("GOOGLE_MAPS_API_KEY") ?: ""
   }
 
   val releaseKeystore = file(System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks")
