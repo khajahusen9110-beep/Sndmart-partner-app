@@ -24,6 +24,7 @@ import com.example.service.DeliveryPartnerFcmService
 import com.example.service.SndmartFirebaseMessagingService
 import com.example.util.availableForPayout
 import com.example.util.cashInHand
+import com.example.util.pendingHandover
 import com.example.util.todayEarnings
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.delay
@@ -129,6 +130,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
     val cashInHandBalance = cashLedger.map { cashInHand(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+
+    val pendingHandoverBalance = cashLedger.map { pendingHandover(it) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
     companion object {
@@ -566,7 +570,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val res = repository.requestCashRemittance(amount, note)
             _isActionLoading.value = false
             res.onSuccess {
-                showMessage("Remittance request for ₹${amount.toInt()} submitted to darkstore hub!")
+                showMessage("Cash handover of ₹${formatRupees(amount)} sent. Waiting for hub confirmation.")
             }.onFailure {
                 showMessage(it.message ?: "Failed to submit remittance request")
             }
@@ -603,7 +607,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 locationTracker.startTracking(updateIntervalSeconds = 20L)
                 showMessage("You are now ONLINE. Live GPS location active.")
             }.onFailure { err ->
-                showMessage("Failed to go online: ${err.message ?: "Network error"}")
+                showMessage(err.message ?: "Failed to go online")
             }
         }
     }
@@ -621,7 +625,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 showMessage("You are now OFFLINE")
             }.onFailure { err ->
-                showMessage("Failed to go offline: ${err.message ?: "Network error"}")
+                showMessage(err.message ?: "Failed to go offline")
             }
         }
     }
@@ -652,7 +656,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 showMessage(if (available) "Status: AVAILABLE for deliveries" else "Status: BUSY (Paused new orders)")
             }.onFailure {
-                showMessage("Could not change availability: ${it.message}")
+                showMessage(it.message ?: "Could not change availability")
             }
         }
     }
@@ -681,7 +685,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 showMessage("Order accepted! Navigating to active delivery.")
             }.onFailure { error ->
                 Log.e("MainViewModel", "Accept order error: ${error.message}", error)
-                showMessage("Accept order error: ${error.message ?: "Failed to accept order"}")
+                showMessage(error.message ?: "Failed to accept order")
             }
         }
     }
@@ -697,7 +701,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 showMessage("Order declined")
             }.onFailure { error ->
                 Log.e("MainViewModel", "Reject order error: ${error.message}", error)
-                showMessage("Failed to decline order: ${error.message ?: "Unknown error"}")
+                showMessage(error.message ?: "Failed to decline order")
             }
         }
     }
@@ -834,7 +838,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 showMessage("Order marked as Picked Up!")
             }.onFailure { err ->
                 Log.e("MainViewModel", "Confirm pickup error: ${err.message}", err)
-                showMessage("Confirm pickup error: ${err.message ?: "Failed to mark picked up"}")
+                showMessage(err.message ?: "Failed to mark picked up")
             }
         }
     }
@@ -1080,7 +1084,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 showMessage("Bank details saved successfully")
             }.onFailure {
-                showMessage("Failed to save bank details: ${it.message}")
+                showMessage(it.message ?: "Failed to save bank details")
             }
         }
     }
@@ -1099,6 +1103,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         DeliveryPartnerFcmService.stopAlertSound()
         repository.dismissIncomingAlert()
     }
+
+    private fun formatRupees(amount: Double): String =
+        if (amount % 1.0 == 0.0) amount.toLong().toString() else String.format(java.util.Locale.US, "%.2f", amount)
 
     fun showMessage(msg: String) {
         _userMessage.value = msg

@@ -30,13 +30,14 @@ import com.example.ui.MainViewModel
 import com.example.ui.components.*
 import com.example.ui.screens.delivery.EmptyDeliveriesState
 import com.example.ui.theme.*
+import com.example.util.parseIsoMillis
 
 @Composable
 fun EarningsScreen(
     viewModel: MainViewModel
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Earnings", "Cash Ledger (COD)", "Payouts")
+    val tabs = listOf("Earnings", "Cash in Hand", "Payouts")
 
     val earnings by viewModel.earnings.collectAsState()
     val cashLedger by viewModel.cashLedger.collectAsState()
@@ -44,6 +45,7 @@ fun EarningsScreen(
     val earningsSummary by viewModel.todayEarningsSummary.collectAsState()
     val cashInHand by viewModel.cashInHandBalance.collectAsState()
     val availablePayout by viewModel.availablePayoutBalance.collectAsState()
+    val pendingHandover by viewModel.pendingHandoverBalance.collectAsState()
 
     var showPayoutDialog by remember { mutableStateOf(false) }
     var showRemittanceDialog by remember { mutableStateOf(false) }
@@ -189,7 +191,7 @@ fun EarningsScreen(
                                     .padding(20.dp)
                             ) {
                                 Text(
-                                    text = "CASH IN HAND (COD BALANCE)",
+                                    text = "CASH IN HAND",
                                     style = MaterialTheme.typography.labelMedium.copy(
                                         color = Slate900.copy(alpha = 0.8f),
                                         fontWeight = FontWeight.Bold
@@ -197,21 +199,32 @@ fun EarningsScreen(
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = "₹${cashInHand.toInt()}",
+                                    text = "₹${formatAmount(cashInHand)}",
                                     style = MaterialTheme.typography.headlineLarge.copy(
                                         fontWeight = FontWeight.ExtraBold,
                                         color = Slate900
-                                    )
+                                    ),
+                                    modifier = Modifier.testTag("cash_in_hand_amount")
                                 )
+                                if (pendingHandover > 0.0) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Handed over - waiting for hub confirmation: ₹${formatAmount(pendingHandover)}",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                                        color = Slate900,
+                                        modifier = Modifier.testTag("pending_handover_amount")
+                                    )
+                                }
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    text = "Please remit cash balance at your designated darkstore hub at end of shift.",
+                                    text = "Cash from delivered cash orders is added automatically. Hand it over at your Sndmart hub.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Slate900.copy(alpha = 0.85f)
                                 )
                                 Spacer(modifier = Modifier.height(14.dp))
                                 Button(
                                     onClick = { showRemittanceDialog = true },
+                                    enabled = cashInHand > 0.0,
                                     shape = RoundedCornerShape(12.dp),
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = Slate900,
@@ -221,7 +234,7 @@ fun EarningsScreen(
                                 ) {
                                     Icon(Icons.Default.AccountBalanceWallet, contentDescription = null)
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Request Cash Remittance", fontWeight = FontWeight.Bold)
+                                    Text("Hand Over Cash", fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -231,7 +244,7 @@ fun EarningsScreen(
                         item {
                             EmptyDeliveriesState(
                                 title = "No Cash Transactions",
-                                subtitle = "When you complete Cash on Delivery (COD) orders or remit funds at darkstores, they will be logged here.",
+                                subtitle = "Cash you collect on delivered cash orders and cash you hand over at the hub will appear here.",
                                 onRefresh = { viewModel.refreshAllData() }
                             )
                         }
@@ -367,6 +380,7 @@ fun EarningItemCard(earning: DeliveryEarning) {
 @Composable
 fun CashLedgerItemCard(entry: CashLedgerEntry) {
     val isCollected = entry.entryType == "collected"
+    val status = entry.status.lowercase()
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
@@ -397,22 +411,58 @@ fun CashLedgerItemCard(entry: CashLedgerEntry) {
                 Spacer(modifier = Modifier.width(12.dp))
                 Column {
                     Text(
-                        text = if (isCollected) "COD Collected (${entry.orderNumber ?: "Order"})" else "Remitted to Hub",
+                        text = if (isCollected) {
+                            "Cash collected · ${entry.orderNumber?.let { "Order #$it" } ?: "Order"}"
+                        } else {
+                            "Handed over to hub"
+                        },
                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
                     )
-                    Text(text = entry.notes ?: entry.createdAt, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    val subtitle = listOfNotNull(entry.notes?.takeIf { it.isNotBlank() }, formatLedgerDate(entry.createdAt))
+                        .joinToString(" · ")
+                    if (subtitle.isNotBlank()) {
+                        Text(text = subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (!isCollected) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        val (label, fg, bg) = when (status) {
+                            "pending" -> Triple("Pending", AmberAccent, AmberContainer)
+                            "rejected" -> Triple("Rejected", StatusRejectedRed, Color(0xFFFEE2E2))
+                            else -> Triple("Confirmed", EmeraldPrimary, EmeraldContainer)
+                        }
+                        Surface(color = bg, shape = RoundedCornerShape(50)) {
+                            Text(
+                                text = label,
+                                color = fg,
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
                 }
             }
 
             Text(
-                text = "${if (isCollected) "+" else "-"}₹${entry.amount.toInt()}",
+                text = "${if (isCollected) "+" else "-"}₹${formatAmount(entry.amount)}",
                 style = MaterialTheme.typography.titleMedium.copy(
                     fontWeight = FontWeight.Bold,
-                    color = if (isCollected) AmberAccent else EmeraldPrimary
+                    color = when {
+                        isCollected -> AmberAccent
+                        status == "rejected" -> MaterialTheme.colorScheme.outline
+                        else -> EmeraldPrimary
+                    }
                 )
             )
         }
     }
+}
+
+private fun formatAmount(amount: Double): String =
+    if (amount % 1.0 == 0.0) amount.toLong().toString() else String.format(java.util.Locale.US, "%.2f", amount)
+
+private fun formatLedgerDate(iso: String): String? {
+    val millis = parseIsoMillis(iso) ?: return null
+    return java.text.SimpleDateFormat("dd MMM, hh:mm a", java.util.Locale.getDefault()).format(java.util.Date(millis))
 }
 
 @Composable
@@ -522,39 +572,50 @@ fun CashRemittanceDialog(
     onDismiss: () -> Unit,
     onSubmit: (Double, String?) -> Unit
 ) {
-    var amountInput by remember { mutableStateOf(if (currentCashBalance > 0) currentCashBalance.toInt().toString() else "0") }
+    var amountInput by remember { mutableStateOf(formatAmount(currentCashBalance)) }
     var noteInput by remember { mutableStateOf("") }
     val enteredAmount = amountInput.toDoubleOrNull() ?: 0.0
-    val isValid = enteredAmount > 0.0
+    // Small tolerance so a rounded default never exceeds the balance.
+    val exceedsBalance = enteredAmount > currentCashBalance + 0.001
+    val isValid = enteredAmount > 0.0 && !exceedsBalance
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Request Cash Remittance") },
+        title = { Text("Hand Over Cash") },
         text = {
             Column {
-                Text("Cash in Hand (COD): ₹${currentCashBalance.toInt()}")
+                Text("Cash in hand: ₹${formatAmount(currentCashBalance)}")
                 Spacer(modifier = Modifier.height(12.dp))
                 OutlinedTextField(
                     value = amountInput,
-                    onValueChange = { amountInput = it.filter { ch -> ch.isDigit() } },
-                    label = { Text("Amount Remitted to Hub (₹)") },
+                    onValueChange = { input ->
+                        val cleaned = input.filter { ch -> ch.isDigit() || ch == '.' }
+                        if (cleaned.count { it == '.' } <= 1 && cleaned.substringAfter('.', "").length <= 2) {
+                            amountInput = cleaned
+                        }
+                    },
+                    label = { Text("Amount handed over (₹)") },
                     leadingIcon = { Icon(Icons.Default.CurrencyRupee, contentDescription = null) },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
+                    isError = exceedsBalance,
+                    supportingText = if (exceedsBalance) {
+                        { Text("Cannot be more than cash in hand") }
+                    } else null,
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(modifier = Modifier.height(10.dp))
                 OutlinedTextField(
                     value = noteInput,
                     onValueChange = { noteInput = it },
-                    label = { Text("Note / Hub Manager Name (Optional)") },
-                    placeholder = { Text("Handed over to Manoj at Indiranagar Hub") },
+                    label = { Text("Note (optional)") },
+                    placeholder = { Text("Gave to hub") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    "Submitting this requests cash settlement with darkstore supervisor. Your ledger updates upon admin confirmation.",
+                    "This shows as Pending until the City Admin confirms it. Cash in hand goes down right away; if the hub rejects it, the amount comes back.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.outline
                 )
@@ -562,15 +623,11 @@ fun CashRemittanceDialog(
         },
         confirmButton = {
             Button(
-                onClick = {
-                    if (isValid) {
-                        onSubmit(enteredAmount, noteInput.ifBlank { null })
-                    }
-                },
+                onClick = { if (isValid) onSubmit(enteredAmount, noteInput.trim().ifBlank { null }) },
                 enabled = isValid,
                 colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
             ) {
-                Text("Submit Remittance")
+                Text("Hand Over")
             }
         },
         dismissButton = {

@@ -233,7 +233,8 @@ data class CashLedgerEntry(
     @Json(name = "order_number") val orderNumber: String? = null,
     val note: String? = null,
     val notes: String? = null,
-    val status: String = "completed", // "pending", "completed" (for remittance requests)
+    val status: String = "confirmed", // "confirmed" | "pending" | "rejected" (remittances start pending)
+    @Json(name = "confirmed_at") val confirmedAt: String? = null,
     @Json(name = "created_at") val createdAt: String = "",
     val orders: CashLedgerOrderModel? = null
 )

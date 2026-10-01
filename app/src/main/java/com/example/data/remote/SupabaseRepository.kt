@@ -1061,8 +1061,9 @@ class SupabaseRepository(
             }
 
             if (isOnline) {
-                // set_online keeps the previous availability; a partner coming online is available.
-                setAvailability(true)
+                // set_online keeps the previous availability (offline clears it); a partner
+                // coming online is available for new orders.
+                setAvailability(true, online = true)
                 if (lat != null && lng != null) updateLocation(lat, lng)
             }
 
@@ -1076,20 +1077,21 @@ class SupabaseRepository(
         }
     }
 
-    suspend fun setAvailability(isAvailable: Boolean): Result<Boolean> = withContext(Dispatchers.IO) {
+    suspend fun setAvailability(isAvailable: Boolean, online: Boolean? = null): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
-            val userId = prefs.userId ?: return@withContext Result.failure(Exception("You are signed out. Please log in again."))
-            // RLS (delivery_partners_self_update) limits this to the caller's own row.
-            val response = apiService.updateDeliveryPartnerByUserId(
+            val partnerId = _currentPartner.value?.id ?: prefs.currentPartnerId
+                ?: return@withContext Result.failure(Exception("Partner profile not loaded. Please refresh."))
+            val isOnline = online ?: _currentPartner.value?.isOnline ?: prefs.onlineState
+            val response = apiService.rpcSetAvailability(
                 apiKey = prefs.customSupabaseKey,
                 bearerToken = bearer(),
-                prefer = "return=representation",
-                userIdFilter = "eq.$userId",
-                partnerData = mapOf("is_available" to isAvailable)
+                params = mapOf("p_partner_id" to partnerId, "p_online" to isOnline, "p_available" to isAvailable)
             )
-            val body = if (response.isSuccessful) response.body()?.string().orEmpty() else ""
-            if (!response.isSuccessful || body.isBlank() || body == "[]") {
+            if (!response.isSuccessful) {
                 return@withContext Result.failure(Exception(errorMessage(response, "Could not update availability")))
+            }
+            if (response.body()?.string()?.trim() == "false") {
+                return@withContext Result.failure(Exception("Partner profile not found"))
             }
             prefs.availableState = isAvailable
             _currentPartner.update { it?.copy(isAvailable = isAvailable) }
@@ -1311,10 +1313,8 @@ class SupabaseRepository(
                 )
             )
             if (!response.isSuccessful) {
-                val msg = errorMessage(response, "Could not complete delivery")
-                return@withContext Result.failure(
-                    Exception(if (msg.contains("Invalid delivery OTP", ignoreCase = true)) "Incorrect OTP. Please ask the customer for the correct delivery code." else msg)
-                )
+                // Server text is shown as-is, e.g. "Invalid delivery OTP".
+                return@withContext Result.failure(Exception(errorMessage(response, "Could not complete delivery")))
             }
 
             localStages.remove(assignmentId)
@@ -1868,10 +1868,12 @@ class SupabaseRepository(
         val partnerId = _currentPartner.value?.id ?: prefs.currentPartnerId ?: return@withContext emptyList()
         val token = prefs.token ?: return@withContext _cashLedger.value
         try {
+            // Cash in hand is summed over the whole ledger, so fetch all rows, not one page.
             var response = apiService.getCashLedger(
                 apiKey = prefs.customSupabaseKey,
                 bearerToken = "Bearer $token",
-                partnerIdFilter = "eq.$partnerId"
+                partnerIdFilter = "eq.$partnerId",
+                limit = CASH_LEDGER_LIMIT
             )
             if (response.code() == 401) {
                 val refreshed = refreshSession()
@@ -1880,7 +1882,8 @@ class SupabaseRepository(
                     response = apiService.getCashLedger(
                         apiKey = prefs.customSupabaseKey,
                         bearerToken = "Bearer $newToken",
-                        partnerIdFilter = "eq.$partnerId"
+                        partnerIdFilter = "eq.$partnerId",
+                        limit = CASH_LEDGER_LIMIT
                     )
                 } else {
                     val msg = "Your session expired, please log in again"
@@ -2241,6 +2244,7 @@ class SupabaseRepository(
         const val MIN_PAYOUT_AMOUNT = 100.0
         private val TERMINAL_STATUSES = setOf("delivered", "cancelled", "rejected")
         private const val POLL_INTERVAL_MS = 20_000L
+        private const val CASH_LEDGER_LIMIT = 1000
 
         @Volatile
         private var INSTANCE: SupabaseRepository? = null

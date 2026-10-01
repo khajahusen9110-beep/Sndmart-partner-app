@@ -11,16 +11,22 @@ fun isCashOnDelivery(paymentMode: String?): Boolean =
     paymentMode.equals("cash", ignoreCase = true) || paymentMode.equals("cod", ignoreCase = true)
 
 /**
- * Cash the partner currently holds: collected cash minus remittances handed over.
+ * Cash the partner currently holds: sum(collected) - sum(remitted that is pending or confirmed).
  * Rejected entries are ignored; pending remittances already count as handed over so the
- * partner is not asked to remit the same cash twice.
+ * partner is not asked to remit the same cash twice. Same rule as
+ * `delivery_partner_request_cash_remittance` on the server.
  */
 fun cashInHand(entries: List<CashLedgerEntry>): Double {
     val active = entries.filterNot { it.status.equals("rejected", ignoreCase = true) }
     val collected = active.filter { it.entryType == "collected" }.sumOf { it.amount }
     val remitted = active.filter { it.entryType == "remitted" }.sumOf { it.amount }
-    return collected - remitted
+    return (collected - remitted).coerceAtLeast(0.0)
 }
+
+/** Cash handed over to the hub that is still waiting for City Admin confirmation. */
+fun pendingHandover(entries: List<CashLedgerEntry>): Double =
+    entries.filter { it.entryType == "remitted" && it.status.equals("pending", ignoreCase = true) }
+        .sumOf { it.amount }
 
 /**
  * Mirrors the server rule in `delivery_partner_request_payment`: unpaid ("pending") earnings

@@ -34,6 +34,24 @@ class LedgerMathTest {
     }
 
     @Test
+    fun pendingHandover_onlyCountsPendingRemittances() {
+        val entries = listOf(
+            cash("collected", 500.0),
+            cash("remitted", 200.0, status = "pending"),
+            cash("remitted", 100.0, status = "confirmed"),
+            cash("remitted", 50.0, status = "rejected")
+        )
+        assertEquals(200.0, pendingHandover(entries), 0.001)
+        assertEquals(200.0, cashInHand(entries), 0.001)
+    }
+
+    @Test
+    fun cashInHand_neverNegative() {
+        assertEquals(0.0, cashInHand(listOf(cash("remitted", 100.0))), 0.001)
+        assertEquals(0.0, cashInHand(emptyList()), 0.001)
+    }
+
+    @Test
     fun availableForPayout_mirrorsServerRule() {
         val earnings = listOf(
             DeliveryEarning(id = "1", netEarning = 60.0, status = "pending"),

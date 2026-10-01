@@ -15,11 +15,20 @@ on its own:
 | Go online / offline | `delivery_partner_set_online` |
 | Live location | `delivery_partner_update_location` |
 | Accept / decline order | `delivery_partner_respond_assignment` |
-| Confirm pickup (photo required) | `delivery_partner_pickup` |
-| Complete delivery (OTP verified on server, earnings + COD cash settled) | `delivery_partner_deliver` |
+| Confirm pickup (photo required) | `delivery_partner_mark_picked_up` |
+| Complete delivery (OTP verified on server, earnings + COD cash settled) | `delivery_partner_complete_delivery` |
 | Payout request (balance checked on server) | `delivery_partner_request_payment` |
 | Bank / UPI details | `delivery_partner_upsert_bank_details` |
-| Cash remittance | `delivery_partner_request_cash_remittance` (added in `supabase/migrations`) |
+| Busy / available toggle | `set_delivery_partner_availability` |
+| Hand over cash to hub | `delivery_partner_request_cash_remittance` |
+
+Photo values are storage paths inside the `delivery-proof-photos` bucket and must start with
+the assignment id (`<assignment_id>/pickup-<millis>.jpg`, `<assignment_id>/delivered-<millis>.jpg`).
+Server error text is shown to the partner as-is.
+
+The only remaining direct table writes are the onboarding insert into `delivery_partners`
+(RLS forces it to `pending`), `profiles` (name/phone/role on onboarding), `device_tokens` and
+marking `notifications` read.
 
 The backend hardening is split in two migrations under `supabase/migrations/`:
 
@@ -46,7 +55,7 @@ SHA-1 stable across machines), otherwise the default Android debug key. Debug-on
 CI (`.github/workflows/main.yml`) runs unit tests on every push and pull request, and on
 `main` builds a signed APK + AAB. Required repository secrets: `GOOGLE_SERVICES_JSON`,
 `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_PASSWORD`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
-`GOOGLE_MAPS_API_KEY`. Optional repository variable `VERSION_NAME` (default `1.0.0`);
+`GOOGLE_MAPS_API_KEY`. Optional repository variable `VERSION_NAME` (default `1.1.0`);
 `versionCode` is the workflow run number.
 
 The force-update screen compares `VERSION_NAME` with `app_versions.minimum_supported_version`

@@ -42,7 +42,7 @@ jobs:
       # Play Store needs a strictly increasing versionCode; VERSION_NAME is what the
       # force-update check compares against app_versions.minimum_supported_version.
       VERSION_CODE: ${{ github.run_number }}
-      VERSION_NAME: ${{ vars.VERSION_NAME || '1.0.0' }}
+      VERSION_NAME: ${{ vars.VERSION_NAME || '1.1.0' }}
 
     steps:
       - name: Checkout

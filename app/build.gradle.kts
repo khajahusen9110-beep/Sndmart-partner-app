@@ -19,8 +19,9 @@ android {
     targetSdk = 36
     // CI passes VERSION_CODE / VERSION_NAME; local builds fall back to the defaults below.
     // VERSION_NAME is also what the force-update check compares against app_versions.
-    versionCode = (System.getenv("VERSION_CODE") ?: "1").toInt()
-    versionName = System.getenv("VERSION_NAME") ?: "1.0.0"
+    // 1.1.0 = RPC-only release. Every partner must be on it before the Phase 2 migration.
+    versionCode = (System.getenv("VERSION_CODE") ?: "2").toInt()
+    versionName = System.getenv("VERSION_NAME") ?: "1.1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

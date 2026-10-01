@@ -118,14 +118,6 @@ interface SupabaseApiService {
         @Body partnerData: Map<String, @JvmSuppressWildcards Any?>
     ): Response<ResponseBody>
 
-    @PATCH("rest/v1/delivery_partners")
-    suspend fun updateDeliveryPartnerByUserId(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") bearerToken: String,
-        @Header("Prefer") prefer: String = "return=representation",
-        @Query("user_id") userIdFilter: String,
-        @Body partnerData: Map<String, @JvmSuppressWildcards Any?>
-    ): Response<ResponseBody>
 
     @GET("rest/v1/delivery_assignments")
     suspend fun getAssignments(
@@ -253,7 +245,7 @@ interface SupabaseApiService {
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("delivery_partner_id") partnerIdFilter: String,
-        @Query("select") select: String = "id,delivery_partner_id,order_id,entry_type,amount,status,note,created_at,orders(order_number)",
+        @Query("select") select: String = "id,delivery_partner_id,order_id,entry_type,amount,status,note,confirmed_at,created_at,orders(order_number)",
         @Query("order") order: String = "created_at.desc",
         @Query("limit") limit: Int = 20,
         @Query("offset") offset: Int = 0
@@ -318,6 +310,14 @@ interface SupabaseApiService {
         @Body params: Map<String, Boolean>
     ): Response<ResponseBody>
 
+    /** Availability toggle (busy/available). Authorised for the partner's own row. */
+    @POST("rest/v1/rpc/set_delivery_partner_availability")
+    suspend fun rpcSetAvailability(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Body params: Map<String, @JvmSuppressWildcards Any>
+    ): Response<ResponseBody>
+
     @POST("rest/v1/rpc/delivery_partner_update_location")
     suspend fun rpcUpdateLocation(
         @Header("apikey") apiKey: String,
@@ -332,14 +332,14 @@ interface SupabaseApiService {
         @Body params: Map<String, @JvmSuppressWildcards Any>
     ): Response<ResponseBody>
 
-    @POST("rest/v1/rpc/delivery_partner_pickup")
+    @POST("rest/v1/rpc/delivery_partner_mark_picked_up")
     suspend fun rpcPickup(
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Body params: Map<String, String>
     ): Response<ResponseBody>
 
-    @POST("rest/v1/rpc/delivery_partner_deliver")
+    @POST("rest/v1/rpc/delivery_partner_complete_delivery")
     suspend fun rpcDeliver(
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
