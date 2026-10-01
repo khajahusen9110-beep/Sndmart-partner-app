@@ -43,6 +43,7 @@ fun EarningsScreen(
     val paymentRequests by viewModel.paymentRequests.collectAsState()
     val earningsSummary by viewModel.todayEarningsSummary.collectAsState()
     val cashInHand by viewModel.cashInHandBalance.collectAsState()
+    val availablePayout by viewModel.availablePayoutBalance.collectAsState()
 
     var showPayoutDialog by remember { mutableStateOf(false) }
     var showRemittanceDialog by remember { mutableStateOf(false) }
@@ -296,7 +297,7 @@ fun EarningsScreen(
 
     if (showPayoutDialog) {
         PayoutRequestDialog(
-            availableBalance = earningsSummary.first,
+            availableBalance = availablePayout,
             onDismiss = { showPayoutDialog = false },
             onSubmit = { amount ->
                 viewModel.requestPayout(amount)

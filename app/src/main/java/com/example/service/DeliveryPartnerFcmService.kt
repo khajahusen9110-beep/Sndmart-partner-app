@@ -1,13 +1,11 @@
 package com.example.service
 
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
 import android.media.MediaPlayer
-import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.MainActivity
@@ -18,124 +16,130 @@ import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 open class DeliveryPartnerFcmService : FirebaseMessagingService() {
 
     override fun onMessageReceived(message: RemoteMessage) {
         super.onMessageReceived(message)
-        Log.d(TAG, "FCM message received from: ${message.from}, data: ${message.data}")
+        Log.d(TAG, "FCM message received from: ${message.from}")
 
-        val assignmentId = message.data["assignmentId"] ?: message.data["assignment_id"] ?: message.data["orderId"] ?: ""
-        val title = message.data["title"] ?: message.notification?.title ?: "New Delivery Available!"
-        val body = message.data["message"] ?: message.data["body"] ?: message.notification?.body ?: "A new delivery is available near you"
+        val assignmentId = message.data["assignment_id"] ?: message.data["assignmentId"] ?: ""
+        val isNewOrder = assignmentId.isNotBlank()
+        val title = message.data["title"] ?: message.notification?.title
+            ?: if (isNewOrder) "New Delivery Available!" else "Sndmart"
+        val body = message.data["message"] ?: message.data["body"] ?: message.notification?.body
+            ?: if (isNewOrder) "A new delivery is available near you" else ""
 
         val intent = Intent(this, MainActivity::class.java).apply {
-            putExtra("assignment_id", assignmentId)
-            putExtra("EXTRA_NAVIGATE_ASSIGNMENT_ID", assignmentId)
+            if (isNewOrder) {
+                putExtra("assignment_id", assignmentId)
+                putExtra("EXTRA_NAVIGATE_ASSIGNMENT_ID", assignmentId)
+            }
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
+        val notifyId = if (isNewOrder) assignmentId.hashCode() else (title + body).hashCode()
         val pendingIntent = PendingIntent.getActivity(
             this,
-            if (assignmentId.isNotBlank()) assignmentId.hashCode() else 2001,
+            notifyId,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val channelId = "new_delivery_alerts"
-        val notificationManager = getSystemService(NotificationManager::class.java)
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                channelId, "New Delivery Alerts", NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                enableVibration(true)
-                vibrationPattern = longArrayOf(0, 1000, 500, 1000, 500, 1000)
-                // Set channel sound to null so the short default chime doesn't play over the 10s custom alert
-                setSound(null, null)
-            }
-            notificationManager.createNotificationChannel(channel)
-        }
+        // Channels are created in SndmartApplication.
+        val channelId = if (isNewOrder) SndmartFirebaseMessagingService.CHANNEL_INCOMING_ORDERS
+        else SndmartFirebaseMessagingService.CHANNEL_DELIVERY_UPDATES
 
         val notification = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(body)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setPriority(if (isNewOrder) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT)
+            .setCategory(if (isNewOrder) NotificationCompat.CATEGORY_CALL else NotificationCompat.CATEGORY_STATUS)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
-            .setOngoing(false)
-            .setSound(null)
             .build()
 
-        val notifyId = if (assignmentId.isNotBlank()) assignmentId.hashCode() else 2001
-        notificationManager.notify(notifyId, notification)
+        getSystemService(NotificationManager::class.java).notify(notifyId, notification)
 
-        // Play continuous ~10s alert sound via MediaPlayer alongside notification
-        playLongAlertSound(this)
+        if (isNewOrder && AppPreferences(applicationContext).soundAlertsEnabled) {
+            playLongAlertSound(this)
+        }
 
-        // Background data sync to refresh local assignment state
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val repo = SupabaseRepository.getInstance(applicationContext)
-                repo.addNotification(title, body, "order")
-                val assignments = repo.fetchAssignments()
-                if (assignmentId.isNotBlank()) {
-                    val target = assignments.find { it.id == assignmentId }
-                    if (target != null && target.status == "assigned" && !repo.isAssignmentHandled(target.id) && !repo.isAssignmentExpired(target)) {
+        val repo = SupabaseRepository.getInstance(applicationContext)
+        repo.addNotification(title, body, if (isNewOrder) "order" else "info")
+        if (isNewOrder) {
+            serviceScope.launch {
+                try {
+                    val target = repo.fetchAssignments().find { it.id == assignmentId }
+                    if (target != null && target.status == "assigned") {
                         repo.setIncomingAssignmentAlert(target)
                     }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error syncing assignments on push: ${e.message}")
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error syncing assignments on push: ${e.message}")
             }
         }
     }
 
     override fun onNewToken(token: String) {
         super.onNewToken(token)
-        Log.i(TAG, "Firebase onNewToken received: $token")
-        registerDeliveryPartnerFcmToken(token)
-    }
-
-    private fun registerDeliveryPartnerFcmToken(token: String) {
-        val prefs = AppPreferences(applicationContext)
-        prefs.fcmDeviceToken = token
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val repo = SupabaseRepository.getInstance(applicationContext)
-                repo.registerDeliveryPartnerFcmToken(token)
-                Log.i(TAG, "Rotated FCM token registered to device_tokens table with firebase_project=native")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to register rotated FCM token: ${e.message}", e)
-            }
+        Log.i(TAG, "Firebase issued a new registration token")
+        AppPreferences(applicationContext).fcmDeviceToken = token
+        serviceScope.launch {
+            // Fails quietly when signed out; the token is registered again after login.
+            SupabaseRepository.getInstance(applicationContext).registerDeliveryPartnerFcmToken(token)
         }
     }
 
     companion object {
         private const val TAG = "DeliveryPartnerFcm"
+        private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+        private val playerLock = Any()
+        private var activePlayer: MediaPlayer? = null
+
+        /** Plays the ~10s new-order alert once. A new alert replaces one that is still ringing. */
         fun playLongAlertSound(context: Context) {
-            try {
-                val mediaPlayer = MediaPlayer()
-                val afd = context.resources.openRawResourceFd(R.raw.order_alert_sound)
-                mediaPlayer.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
-                afd.close()
-                mediaPlayer.setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
-                mediaPlayer.isLooping = false
-                mediaPlayer.setOnCompletionListener { it.release() }
-                mediaPlayer.prepare()
-                mediaPlayer.start()
-                Log.d(TAG, "10-second order alert sound playback started successfully")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to play alert sound", e)
+            synchronized(playerLock) {
+                stopAlertSoundLocked()
+                try {
+                    val afd = context.resources.openRawResourceFd(R.raw.order_alert_sound)
+                    val player = MediaPlayer()
+                    afd.use { player.setDataSource(it.fileDescriptor, it.startOffset, it.length) }
+                    player.setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .build()
+                    )
+                    player.isLooping = false
+                    player.setOnCompletionListener { stopAlertSound() }
+                    player.prepare()
+                    player.start()
+                    activePlayer = player
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to play alert sound", e)
+                }
             }
+        }
+
+        /** Stops the alert, e.g. when the partner accepts or declines the order. */
+        fun stopAlertSound() {
+            synchronized(playerLock) { stopAlertSoundLocked() }
+        }
+
+        private fun stopAlertSoundLocked() {
+            activePlayer?.let {
+                try {
+                    if (it.isPlaying) it.stop()
+                } catch (_: IllegalStateException) {
+                }
+                it.release()
+            }
+            activePlayer = null
         }
     }
 }

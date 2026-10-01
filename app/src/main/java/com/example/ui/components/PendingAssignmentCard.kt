@@ -19,8 +19,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.DeliveryAssignment
 import com.example.ui.theme.*
+import com.example.util.parseIsoMillis
 import kotlinx.coroutines.delay
-import java.text.SimpleDateFormat
 import java.util.*
 
 @Composable
@@ -31,7 +31,7 @@ fun PendingAssignmentCard(
     modifier: Modifier = Modifier
 ) {
     val initialSeconds = remember(assignment.id) {
-        calculateRemainingWindow(assignment.expiresAt, assignment.createdAt, assignment.expiresInSeconds)
+        calculateRemainingWindow(assignment.expiresAt, assignment.assignedAt ?: assignment.createdAt, assignment.expiresInSeconds)
     }
     var secondsLeft by remember(assignment.id) { mutableIntStateOf(initialSeconds) }
 
@@ -325,31 +325,11 @@ fun PendingAssignmentCard(
 }
 
 private fun calculateRemainingWindow(expiresAtIso: String?, createdAtIso: String?, defaultDuration: Int = 60): Int {
-    if (!expiresAtIso.isNullOrBlank()) {
-        try {
-            val cleanStr = expiresAtIso.substringBefore(".").substringBefore("Z").substringBefore("+")
-            val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).apply {
-                timeZone = TimeZone.getTimeZone("UTC")
-            }
-            val expDate = sdf.parse(cleanStr)
-            if (expDate != null) {
-                val diffSeconds = ((expDate.time - System.currentTimeMillis()) / 1000).toInt()
-                return diffSeconds.coerceIn(0, 120)
-            }
-        } catch (_: Exception) {}
-    }
-    if (!createdAtIso.isNullOrBlank()) {
-        try {
-            val cleanStr = createdAtIso.substringBefore(".").substringBefore("Z").substringBefore("+")
-            val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).apply {
-                timeZone = TimeZone.getTimeZone("UTC")
-            }
-            val createdDate = sdf.parse(cleanStr)
-            if (createdDate != null) {
-                val elapsed = ((System.currentTimeMillis() - createdDate.time) / 1000).toInt()
-                return (60 - elapsed).coerceIn(0, 60)
-            }
-        } catch (_: Exception) {}
+    val now = System.currentTimeMillis()
+    parseIsoMillis(expiresAtIso)?.let { return ((it - now) / 1000).toInt().coerceIn(0, 120) }
+    parseIsoMillis(createdAtIso)?.let {
+        val window = defaultDuration.coerceIn(30, 120)
+        return (window - ((now - it) / 1000).toInt()).coerceIn(0, window)
     }
     return defaultDuration.coerceIn(5, 60)
 }

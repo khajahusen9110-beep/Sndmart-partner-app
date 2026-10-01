@@ -2,6 +2,7 @@ package com.example.data.local
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.example.BuildConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,31 +28,15 @@ class AppPreferences(context: Context) {
     private val _userPhone = MutableStateFlow(prefs.getString(KEY_USER_PHONE, null))
     val userPhoneFlow: StateFlow<String?> = _userPhone.asStateFlow()
 
-    private val _supabaseUrl = MutableStateFlow(prefs.getString(KEY_SUPABASE_URL, DEFAULT_SUPABASE_URL) ?: DEFAULT_SUPABASE_URL)
-    val supabaseUrl: StateFlow<String> = _supabaseUrl.asStateFlow()
+    // Backend endpoint is fixed at build time (.env / CI secrets). It is intentionally not
+    // user-editable: a runtime override would let anyone point the app at a hostile server.
+    val customSupabaseUrl: String
+        get() = BuildConfig.SUPABASE_URL.takeIf { it.startsWith("https://") } ?: DEFAULT_SUPABASE_URL
 
-    private val _supabaseKey = MutableStateFlow(
-        prefs.getString(KEY_SUPABASE_KEY, null)?.takeIf { !it.contains("placeholder_anon_key") }
+    // The anon key is public by design (row level security protects the data).
+    val customSupabaseKey: String
+        get() = BuildConfig.SUPABASE_ANON_KEY.takeIf { it.isNotBlank() && !it.contains("placeholder") }
             ?: DEFAULT_ANON_KEY
-    )
-    val supabaseKey: StateFlow<String> = _supabaseKey.asStateFlow()
-
-    var customSupabaseUrl: String
-        get() = prefs.getString(KEY_SUPABASE_URL, DEFAULT_SUPABASE_URL) ?: DEFAULT_SUPABASE_URL
-        set(value) {
-            prefs.edit().putString(KEY_SUPABASE_URL, value).apply()
-            _supabaseUrl.value = value
-        }
-
-    var customSupabaseKey: String
-        get() {
-            val key = prefs.getString(KEY_SUPABASE_KEY, DEFAULT_ANON_KEY) ?: DEFAULT_ANON_KEY
-            return if (key.contains("placeholder_anon_key")) DEFAULT_ANON_KEY else key
-        }
-        set(value) {
-            prefs.edit().putString(KEY_SUPABASE_KEY, value).apply()
-            _supabaseKey.value = value
-        }
 
     var token: String?
         get() = prefs.getString(KEY_AUTH_TOKEN, null)
@@ -134,14 +119,12 @@ class AppPreferences(context: Context) {
             _isAvailable.value = value
         }
 
+    /** Real FCM registration token, or "" until Firebase has issued one. */
     var fcmDeviceToken: String
         get() {
-            var token = prefs.getString(KEY_FCM_DEVICE_TOKEN, null)
-            if (token.isNullOrEmpty()) {
-                token = "fcm_sndmart_partner_${java.util.UUID.randomUUID().toString().replace("-", "").take(20)}"
-                prefs.edit().putString(KEY_FCM_DEVICE_TOKEN, token).apply()
-            }
-            return token
+            val token = prefs.getString(KEY_FCM_DEVICE_TOKEN, null).orEmpty()
+            // Older builds stored a locally generated placeholder that FCM can never deliver to.
+            return if (token.startsWith(LEGACY_FAKE_TOKEN_PREFIX)) "" else token
         }
         set(value) = prefs.edit().putString(KEY_FCM_DEVICE_TOKEN, value).apply()
 
@@ -192,10 +175,13 @@ class AppPreferences(context: Context) {
             .remove(KEY_PARTNER_VEHICLE_TYPE)
             .remove(KEY_PARTNER_VEHICLE_NUMBER)
             .remove(KEY_APPROVAL_STATUS)
+            .remove(KEY_FCM_REGISTERED)
+            .remove(KEY_HANDLED_ASSIGNMENTS)
             .putBoolean(KEY_IS_ONLINE, false)
             .apply()
         _authToken.value = null
         _userEmail.value = null
+        _userPhone.value = null
         _partnerId.value = null
         _isOnline.value = false
     }
@@ -217,8 +203,7 @@ class AppPreferences(context: Context) {
         private const val KEY_APPROVAL_STATUS = "approval_status"
         private const val KEY_IS_ONLINE = "is_online"
         private const val KEY_IS_AVAILABLE = "is_available"
-        private const val KEY_SUPABASE_URL = "supabase_url"
-        private const val KEY_SUPABASE_KEY = "supabase_key"
+        private const val LEGACY_FAKE_TOKEN_PREFIX = "fcm_sndmart_partner_"
         private const val KEY_FCM_DEVICE_TOKEN = "fcm_device_token"
         private const val KEY_FCM_REGISTERED = "fcm_registered"
         private const val KEY_SOUND_ALERTS = "sound_alerts"

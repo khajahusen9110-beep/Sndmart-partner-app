@@ -33,6 +33,7 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.BuildConfig
 import com.example.ui.MainViewModel
 import com.example.ui.theme.*
 import kotlinx.coroutines.launch
@@ -204,8 +205,9 @@ fun OnboardingScreen(
                     Text("Select from Photos")
                 }
             },
+            // Generated sample documents are only for debug builds / emulators.
             dismissButton = {
-                OutlinedButton(
+                if (BuildConfig.DEBUG) OutlinedButton(
                     onClick = {
                         showAadharDialog = false
                         coroutineScope.launch {
@@ -263,7 +265,7 @@ fun OnboardingScreen(
                 }
             },
             dismissButton = {
-                OutlinedButton(
+                if (BuildConfig.DEBUG) OutlinedButton(
                     onClick = {
                         showLicenceDialog = false
                         coroutineScope.launch {
@@ -576,31 +578,6 @@ fun OnboardingScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Quick auto-attach button for convenience
-            if (aadharPath == null || (selectedVehicleType != "cycle" && licencePath == null)) {
-                OutlinedButton(
-                    onClick = {
-                        val uid = authUserId ?: viewModel.prefs.userId ?: "partner"
-                        aadharPath = "$uid/aadhar_sample.jpg"
-                        if (selectedVehicleType == "cycle") {
-                            licencePath = "cycle_exempt"
-                        } else {
-                            licencePath = "$uid/license_sample.jpg"
-                        }
-                        viewModel.showMessage("Sample KYC documents attached for verification")
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("quick_attach_kyc_button"),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Auto-Attach Demo KYC Documents", style = MaterialTheme.typography.labelMedium)
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-
             Button(
                 onClick = {
                     if (fullName.isBlank()) {
@@ -625,11 +602,11 @@ fun OnboardingScreen(
                         return@Button
                     }
                     if (aadharPath.isNullOrBlank()) {
-                        viewModel.showMessage("Please upload your Aadhaar Card photo (or use Auto-Attach Demo KYC)")
+                        viewModel.showMessage("Please upload your Aadhaar Card photo")
                         return@Button
                     }
                     if (selectedVehicleType != "cycle" && licencePath.isNullOrBlank()) {
-                        viewModel.showMessage("Please upload your Driving Licence (or use Auto-Attach Demo KYC)")
+                        viewModel.showMessage("Please upload your Driving Licence")
                         return@Button
                     }
 

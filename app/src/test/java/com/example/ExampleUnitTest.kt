@@ -34,21 +34,17 @@ class ExampleUnitTest {
 
     @Test
     fun startupChecks_updateRequiredCondition() {
-        val currentAppVersion = MainViewModel.CURRENT_APP_VERSION
+        val current = "1.0.0"
 
-        // Case 1: below minimum version
-        val minVerHigher = "1.0.1"
-        val isBelow = MainViewModel.compareVersions(currentAppVersion, minVerHigher) < 0
-        val forceUpdateFalse = false
-        assertTrue(isBelow || forceUpdateFalse)
+        // Below the minimum supported version -> update required
+        assertTrue(MainViewModel.compareVersions(current, "1.0.1") < 0)
 
-        // Case 2: equal to minimum version, force_update is false -> no update required
-        val minVerEqual = "1.0.0"
-        val isBelowEqual = MainViewModel.compareVersions(currentAppVersion, minVerEqual) < 0
-        assertFalse(isBelowEqual || forceUpdateFalse)
+        // Equal to the minimum and force_update false -> no update required
+        assertFalse(MainViewModel.compareVersions(current, "1.0.0") < 0)
+    }
 
-        // Case 3: force_update is true -> update required even if equal
-        val forceUpdateTrue = true
-        assertTrue(isBelowEqual || forceUpdateTrue)
+    @Test
+    fun currentAppVersion_isSemantic() {
+        assertTrue(MainViewModel.CURRENT_APP_VERSION.matches(Regex("""\d+\.\d+\.\d+.*""")))
     }
 }

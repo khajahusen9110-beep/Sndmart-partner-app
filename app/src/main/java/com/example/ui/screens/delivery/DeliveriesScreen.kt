@@ -27,6 +27,7 @@ import com.example.data.model.DeliveryBatch
 import com.example.ui.MainViewModel
 import com.example.ui.components.*
 import com.example.ui.theme.*
+import com.example.util.isCashOnDelivery
 
 @Composable
 fun DeliveriesScreen(
@@ -284,14 +285,14 @@ fun ActiveDeliveryCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Surface(
-                    color = if (assignment.paymentMode == "COD") AmberContainer else Slate100,
+                    color = if (isCashOnDelivery(assignment.paymentMode)) AmberContainer else Slate100,
                     shape = RoundedCornerShape(6.dp)
                 ) {
                     Text(
                         text = "${assignment.paymentMode} • ₹${assignment.totalAmount.toInt()}",
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontWeight = FontWeight.Bold,
-                            color = if (assignment.paymentMode == "COD") AmberOnContainer else Slate700
+                            color = if (isCashOnDelivery(assignment.paymentMode)) AmberOnContainer else Slate700
                         ),
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                     )

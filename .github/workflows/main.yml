@@ -4,11 +4,45 @@ on:
   push:
     branches:
       - main
+  pull_request:
   workflow_dispatch:
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Unit tests
+        run: ./gradlew testDebugUnitTest
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: app/build/reports/tests/
+
+  build:
+    needs: test
+    # Release builds need the signing secrets, which are not available to pull requests.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      # Play Store needs a strictly increasing versionCode; VERSION_NAME is what the
+      # force-update check compares against app_versions.minimum_supported_version.
+      VERSION_CODE: ${{ github.run_number }}
+      VERSION_NAME: ${{ vars.VERSION_NAME || '1.0.0' }}
 
     steps:
       - name: Checkout
@@ -23,6 +57,21 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Check required secrets
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          missing=0
+          for name in GOOGLE_SERVICES_JSON KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_PASSWORD SUPABASE_URL SUPABASE_ANON_KEY; do
+            if [ -z "${!name}" ]; then echo "::error::Missing secret $name"; missing=1; fi
+          done
+          exit $missing
+
       - name: Restore Google Services JSON
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
@@ -36,31 +85,23 @@ jobs:
           echo "$KEYSTORE_BASE64" | base64 --decode > my-upload-key.jks
 
       - name: Create environment file
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
         run: |
-          cat > .env <<EOF
-          VITE_SUPABASE_URL=${{ secrets.SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
-          SUPABASE_URL=${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
-          GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}
-          EOF
+          {
+            echo "SUPABASE_URL=$SUPABASE_URL"
+            echo "SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY"
+            echo "GOOGLE_MAPS_API_KEY=$GOOGLE_MAPS_API_KEY"
+          } > .env
 
-      - name: Build Release APK
+      - name: Build Release APK and AAB
         env:
           KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
           STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          chmod +x ./gradlew
-          ./gradlew assembleRelease
-
-      - name: Build Release AAB
-        env:
-          KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
-          STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          ./gradlew bundleRelease
+        run: ./gradlew assembleRelease bundleRelease
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

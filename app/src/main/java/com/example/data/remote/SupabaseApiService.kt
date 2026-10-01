@@ -1,17 +1,15 @@
 package com.example.data.remote
 
 import com.example.data.model.*
-import okhttp3.MultipartBody
 import okhttp3.RequestBody
 import okhttp3.ResponseBody
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.Header
-import retrofit2.http.Multipart
 import retrofit2.http.PATCH
 import retrofit2.http.POST
-import retrofit2.http.Part
+import retrofit2.http.PUT
 import retrofit2.http.Path
 import retrofit2.http.Query
 
@@ -63,6 +61,20 @@ interface SupabaseApiService {
     @POST("auth/v1/otp")
     suspend fun requestOtp(
         @Header("apikey") apiKey: String,
+        @Body body: Map<String, String>
+    ): Response<ResponseBody>
+
+    /** Passwordless login code for an existing account (create_user=false). */
+    @POST("auth/v1/otp")
+    suspend fun requestLoginOtp(
+        @Header("apikey") apiKey: String,
+        @Body body: Map<String, @JvmSuppressWildcards Any>
+    ): Response<ResponseBody>
+
+    @PUT("auth/v1/user")
+    suspend fun updateUser(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
         @Body body: Map<String, String>
     ): Response<ResponseBody>
 
@@ -120,7 +132,7 @@ interface SupabaseApiService {
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("delivery_partner_id") partnerIdFilter: String,
-        @Query("select") select: String = "id,order_id,delivery_partner_id,status,assigned_at,accepted_at,picked_up_at,delivered_at,pickup_photo_url,delivered_photo_url,delivery_otp,expires_at,batch_id,estimated_delivery_minutes,estimated_delivery_at,orders(id,order_number,total_amount,delivery_fee,payment_method,vendor_id,address_id,city_id,vendors(id,name,latitude,longitude,address,phone),customer_addresses(id,lat,lng,recipient_name,phone,address_line,landmark))",
+        @Query("select") select: String = "id,order_id,delivery_partner_id,status,assigned_at,accepted_at,picked_up_at,delivered_at,pickup_photo_url,delivered_photo_url,expires_at,batch_id,estimated_delivery_minutes,estimated_delivery_at,orders(id,order_number,total_amount,delivery_fee,payment_method,vendor_id,address_id,city_id,vendors(id,name,latitude,longitude,address,phone),customer_addresses(id,lat,lng,recipient_name,phone,address_line,landmark))",
         @Query("order") order: String = "created_at.desc",
         @Query("limit") limit: Int = 20,
         @Query("offset") offset: Int = 0
@@ -220,13 +232,6 @@ interface SupabaseApiService {
         @Query("offset") offset: Int = 0
     ): Response<List<PaymentRequest>>
 
-    @POST("rest/v1/delivery_partner_cash_ledger")
-    suspend fun insertCashLedger(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") bearerToken: String,
-        @Body entry: Map<String, @JvmSuppressWildcards Any?>
-    ): Response<ResponseBody>
-
     @PATCH("rest/v1/profiles")
     suspend fun updateProfile(
         @Header("apikey") apiKey: String,
@@ -304,7 +309,7 @@ interface SupabaseApiService {
     ): Response<ResponseBody>
 
     // =========================================================================
-    // RPC Functions (Section 5 Spec - SECURITY DEFINER)
+    // RPC functions (SECURITY DEFINER; they check auth.uid() ownership and state)
     // =========================================================================
     @POST("rest/v1/rpc/delivery_partner_set_online")
     suspend fun rpcSetOnline(
@@ -313,25 +318,11 @@ interface SupabaseApiService {
         @Body params: Map<String, Boolean>
     ): Response<ResponseBody>
 
-    @POST("rest/v1/rpc/delivery_partner_set_availability")
-    suspend fun rpcSetAvailability(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") bearerToken: String,
-        @Body params: Map<String, @JvmSuppressWildcards Any>
-    ): Response<ResponseBody>
-
     @POST("rest/v1/rpc/delivery_partner_update_location")
     suspend fun rpcUpdateLocation(
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Body params: Map<String, Double>
-    ): Response<ResponseBody>
-
-    @POST("rest/v1/rpc/get_delivery_assignment_details")
-    suspend fun rpcGetAssignmentDetails(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") bearerToken: String,
-        @Body params: Map<String, String>
     ): Response<ResponseBody>
 
     @POST("rest/v1/rpc/delivery_partner_respond_assignment")
@@ -348,24 +339,8 @@ interface SupabaseApiService {
         @Body params: Map<String, String>
     ): Response<ResponseBody>
 
-    // Retain alias for compatibility if needed
-    @POST("rest/v1/rpc/delivery_partner_pickup")
-    suspend fun rpcMarkPickedUp(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") bearerToken: String,
-        @Body params: Map<String, String>
-    ): Response<ResponseBody>
-
     @POST("rest/v1/rpc/delivery_partner_deliver")
     suspend fun rpcDeliver(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") bearerToken: String,
-        @Body params: Map<String, String>
-    ): Response<ResponseBody>
-
-    // Retain alias for compatibility if needed
-    @POST("rest/v1/rpc/delivery_partner_deliver")
-    suspend fun rpcCompleteDelivery(
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Body params: Map<String, String>
@@ -392,13 +367,6 @@ interface SupabaseApiService {
         @Body params: Map<String, @JvmSuppressWildcards Any?>
     ): Response<ResponseBody>
 
-    @POST("rest/v1/rpc/get_delivery_partner_cash_balance")
-    suspend fun rpcGetCashBalance(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") bearerToken: String,
-        @Body params: Map<String, String>
-    ): Response<ResponseBody>
-
     // Storage Upload
     @POST("storage/v1/object/{bucket}/{folder}/{fileName}")
     suspend fun uploadStorageObject(
@@ -410,16 +378,6 @@ interface SupabaseApiService {
         @Path("folder") folder: String,
         @Path("fileName") fileName: String,
         @Body fileBytes: RequestBody
-    ): Response<ResponseBody>
-
-    @POST("storage/v1/object/sign/{bucket}/{folder}/{fileName}")
-    suspend fun createSignedUrl(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") bearerToken: String,
-        @Path("bucket") bucket: String,
-        @Path("folder") folder: String,
-        @Path("fileName") fileName: String,
-        @Body body: Map<String, Int>
     ): Response<ResponseBody>
 
     // Device token registration (UPSERT on conflict user_id, user_type)
@@ -449,66 +407,4 @@ interface SupabaseApiService {
         @Body tokenData: Map<String, @JvmSuppressWildcards Any?>
     ): Response<ResponseBody>
 
-    // Direct table operations per backend spec
-    @PATCH("rest/v1/delivery_assignments")
-    suspend fun updateAssignment(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") bearerToken: String,
-        @Query("id") idFilter: String,
-        @Body data: Map<String, @JvmSuppressWildcards Any?>
-    ): Response<ResponseBody>
-
-    @PATCH("rest/v1/delivery_assignments")
-    suspend fun updateAssignmentByFilter(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") bearerToken: String,
-        @Query("or") orFilter: String,
-        @Body data: Map<String, @JvmSuppressWildcards Any?>
-    ): Response<ResponseBody>
-
-    @POST("rest/v1/delivery_status_history")
-    suspend fun insertStatusHistory(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") bearerToken: String,
-        @Body data: Map<String, @JvmSuppressWildcards Any?>
-    ): Response<ResponseBody>
-
-    @POST("rest/v1/delivery_otp_attempts")
-    suspend fun insertOtpAttempt(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") bearerToken: String,
-        @Body data: Map<String, @JvmSuppressWildcards Any?>
-    ): Response<ResponseBody>
-
-    @PATCH("rest/v1/orders")
-    suspend fun updateOrder(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") bearerToken: String,
-        @Query("id") idFilter: String,
-        @Body data: Map<String, @JvmSuppressWildcards Any?>
-    ): Response<ResponseBody>
-
-    @PATCH("rest/v1/delivery_partners")
-    suspend fun updateDeliveryPartner(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") bearerToken: String,
-        @Header("Prefer") prefer: String = "return=representation",
-        @Query("id") idFilter: String,
-        @Body partnerData: Map<String, @JvmSuppressWildcards Any?>
-    ): Response<ResponseBody>
-
-    @POST("rest/v1/delivery_partner_bank_details?on_conflict=delivery_partner_id")
-    suspend fun upsertBankDetails(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") bearerToken: String,
-        @Header("Prefer") prefer: String = "resolution=merge-duplicates",
-        @Body details: Map<String, @JvmSuppressWildcards Any?>
-    ): Response<ResponseBody>
-
-    @POST("rest/v1/delivery_partner_payment_requests")
-    suspend fun insertPaymentRequest(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") bearerToken: String,
-        @Body request: Map<String, @JvmSuppressWildcards Any?>
-    ): Response<ResponseBody>
 }
