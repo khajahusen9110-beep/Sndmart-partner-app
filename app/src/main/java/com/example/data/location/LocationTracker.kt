@@ -26,6 +26,8 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.coroutines.resume
 
 /**
@@ -59,6 +61,29 @@ class LocationTracker private constructor(
 
     @Volatile
     private var lastFixElapsedMs = 0L
+
+    /** Why the last location push failed, for the "Location is not updating" banner. */
+    enum class Problem { NONE, NO_PERMISSION, GPS_OFF, NO_FIX, NETWORK }
+
+    private val _problem = MutableStateFlow(Problem.NONE)
+    val problem: StateFlow<Problem> = _problem.asStateFlow()
+
+    /** elapsedRealtime of the last location the server accepted (0 = none since going online). */
+    private val _lastPushOkElapsed = MutableStateFlow(0L)
+    val lastPushOkElapsed: StateFlow<Long> = _lastPushOkElapsed.asStateFlow()
+
+    /** elapsedRealtime when tracking started, so "not updating" can be judged before any push. */
+    @Volatile
+    var trackingStartedElapsed = 0L
+        private set
+
+    private val pushMutex = Mutex()
+
+    @Volatile
+    private var lastPushed: Pair<Double, Double>? = null
+
+    @Volatile
+    private var lastPushElapsed = 0L
 
     private val fusedLocationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
@@ -135,13 +160,17 @@ class LocationTracker private constructor(
     }
 
     @SuppressLint("MissingPermission")
-    fun startTracking(updateIntervalSeconds: Long = 20L) {
+    fun startTracking(updateIntervalSeconds: Long = UPDATE_INTERVAL_SECONDS) {
         if (!hasLocationPermission()) {
             Log.w(TAG, "startTracking skipped: location permission not granted")
             return
         }
         if (_isTracking.value) return
         _isTracking.value = true
+        trackingStartedElapsed = SystemClock.elapsedRealtime()
+        _lastPushOkElapsed.value = 0L
+        _problem.value = Problem.NONE
+        lastPushed = null
 
         LocationTrackingService.start(context)
 
@@ -162,15 +191,17 @@ class LocationTracker private constructor(
         trackingJob?.cancel()
         trackingJob = coroutineScope.launch {
             while (isActive && _isTracking.value) {
-                val fixIsFresh = lastFixElapsedMs > 0 &&
-                    SystemClock.elapsedRealtime() - lastFixElapsedMs < updateIntervalSeconds * 3 * 1000L
-                val position = if (fixIsFresh) _currentLocation.value else getCurrentGpsLocation()
-
-                // Pushed every tick even when stationary, so last_location_at stays fresh for dispatch.
-                if (position != null) {
-                    repository.updateLocation(position.first, position.second)
-                } else {
-                    Log.w(TAG, "No GPS fix available; skipping location push")
+                when {
+                    !hasLocationPermission() -> _problem.value = Problem.NO_PERMISSION
+                    !isGpsEnabled() -> _problem.value = Problem.GPS_OFF
+                    else -> {
+                        val fixIsFresh = lastFixElapsedMs > 0 &&
+                            SystemClock.elapsedRealtime() - lastFixElapsedMs < updateIntervalSeconds * 3 * 1000L
+                        val position = if (fixIsFresh) _currentLocation.value else getCurrentGpsLocation()
+                        // Sent every tick even when stationary, so last_location_at stays fresh:
+                        // the server only offers orders to partners seen in the last 5 minutes.
+                        if (position != null) push(position) else _problem.value = Problem.NO_FIX
+                    }
                 }
                 delay(updateIntervalSeconds * 1000L)
             }
@@ -196,6 +227,7 @@ class LocationTracker private constructor(
 
     fun stopTracking() {
         _isTracking.value = false
+        _problem.value = Problem.NONE
         trackingJob?.cancel()
         trackingJob = null
         try {
@@ -217,8 +249,45 @@ class LocationTracker private constructor(
     private fun onFix(location: Location) {
         if (!isValid(location)) return
         lastFixElapsedMs = SystemClock.elapsedRealtime()
-        _currentLocation.value = Pair(location.latitude, location.longitude)
+        val position = Pair(location.latitude, location.longitude)
+        _currentLocation.value = position
         _hasRealFix.value = true
+        // Push right away after a significant move instead of waiting for the next tick.
+        if (_isTracking.value && movedSignificantly(position) &&
+            SystemClock.elapsedRealtime() - lastPushElapsed > MIN_MOVE_PUSH_GAP_MS
+        ) {
+            coroutineScope.launch { push(position) }
+        }
+    }
+
+    private fun movedSignificantly(position: Pair<Double, Double>): Boolean {
+        val previous = lastPushed ?: return true
+        val result = FloatArray(1)
+        Location.distanceBetween(previous.first, previous.second, position.first, position.second, result)
+        return result[0] >= SIGNIFICANT_MOVE_METERS
+    }
+
+    /** Sends one location to the server and records the outcome for the health banner. */
+    private suspend fun push(position: Pair<Double, Double>) = pushMutex.withLock {
+        lastPushElapsed = SystemClock.elapsedRealtime()
+        repository.updateLocation(position.first, position.second)
+            .onSuccess {
+                lastPushed = position
+                _lastPushOkElapsed.value = SystemClock.elapsedRealtime()
+                _problem.value = Problem.NONE
+            }
+            .onFailure {
+                Log.w(TAG, "Location push failed: ${it.message}")
+                _problem.value = Problem.NETWORK
+            }
+    }
+
+    private fun isGpsEnabled(): Boolean = try {
+        val lm = locationManager
+        lm == null || lm.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
+            lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+    } catch (e: Exception) {
+        true
     }
 
     private fun isValid(loc: Location) =
@@ -236,6 +305,9 @@ class LocationTracker private constructor(
 
     companion object {
         private const val TAG = "LocationTracker"
+        const val UPDATE_INTERVAL_SECONDS = 30L
+        private const val SIGNIFICANT_MOVE_METERS = 50f
+        private const val MIN_MOVE_PUSH_GAP_MS = 10_000L
 
         @Volatile
         private var INSTANCE: LocationTracker? = null

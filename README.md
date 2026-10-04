@@ -55,8 +55,44 @@ The backend hardening is split in two migrations under `supabase/migrations/`:
 - **Mandatory permissions:** notifications, "Display over other apps" and, on Android 14+,
   full-screen alerts. The partner cannot go online until all are granted; a red banner on the
   Dashboard shows while any is missing.
+- **Which pushes ring:** a push is a new offer only when it carries a non-empty `assignment_id`
+  (or `assignmentId`). Every other push is a normal notification: no full screen, no alarm.
+  `order_id` is never used as an assignment id.
+
+## Staying online (location freshness)
+
+The server offers orders only to partners whose location is fresh, and sets a partner offline
+when updates stop for long. While online:
+
+- `LocationTrackingService` (foreground service, type `location`) keeps the notification
+  "You are online - receiving orders" and keeps the process alive.
+- `LocationTracker` calls `delivery_partner_update_location` every 30 s, and at once after a
+  move of more than 50 m. Failed updates are retried on the next tick.
+- No successful update for 3 minutes → red Dashboard banner "Location is not updating - you will
+  NOT receive new orders. Tap to fix." (opens app permissions, GPS settings, or says to check
+  the internet).
+- Going online asks, in order and with an explanation: location → "Allow all the time"
+  (Android 10+) → notifications (Android 13+) → display over other apps → full-screen alerts →
+  "Don't optimize" battery. A one-time Autostart tip is shown on Xiaomi, Vivo, Oppo and Realme phones.
+- Going online sends a fresh location first, then `delivery_partner_set_online(true)`. Going
+  offline stops the service and calls `delivery_partner_set_online(false)`.
+- The switch shows "Online" only when the partner's own `delivery_partners` row says so. The
+  row is read on app start, on every resume and every minute. If the partner had gone online but the
+  server set them offline, the Dashboard shows "You were set offline" with a **Go online**
+  button.
 
 ### Play Console declarations
+
+- **Background location (`ACCESS_BACKGROUND_LOCATION`):** App content → Location permissions.
+  Use case: *"While a delivery partner is online, the app shares their live location so nearby
+  delivery requests can be offered to them and customers can track the delivery. Location is
+  shared only while the partner is online; a persistent notification is shown the whole time."*
+  Google asks for a short video showing the prominent disclosure (the "Before you go online"
+  screen) and the online notification.
+- **Foreground service type location:** App content → Foreground service permissions →
+  declare "Location" with the same use case.
+- **Battery optimization (`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`):** allowed for apps whose core
+  function needs background work. Delivery dispatch fits that use; mention it in the review notes.
 
 - **Full-screen intent (`USE_FULL_SCREEN_INTENT`), Android 14+:** App content → Full-screen
   intent → declare the use case. Suggested text: *"Delivery partners receive time-limited

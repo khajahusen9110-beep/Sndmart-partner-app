@@ -13,6 +13,11 @@ class PushAndClockTest {
         assertEquals("", newOfferAssignmentId(mapOf("assignment_id" to "o-1", "order_id" to "o-1")))
         assertEquals("", newOfferAssignmentId(mapOf("assignment_id" to "", "order_id" to "")))
         assertEquals("", newOfferAssignmentId(mapOf("title" to "Payout approved")))
+        // Order-only push (status update): never an offer, order_id is not an assignment id.
+        assertEquals("", newOfferAssignmentId(mapOf("order_id" to "o-1", "type" to "order_cancelled")))
+        assertEquals("", newOfferAssignmentId(mapOf("assignment_id" to "  ", "order_id" to "o-1")))
+        assertEquals("a-2", newOfferAssignmentId(mapOf("assignmentId" to "a-2")))
+        assertEquals("a-3", newOfferAssignmentId(mapOf("assignment_id" to "", "assignmentId" to "a-3")))
     }
 
     @Test

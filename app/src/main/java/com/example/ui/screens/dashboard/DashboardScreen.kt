@@ -28,7 +28,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import android.Manifest
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
+import android.provider.Settings
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.core.app.ActivityCompat
+import com.example.data.location.LocationTracker
 import com.example.data.model.DeliveryAssignment
 import com.example.data.model.DeliveryBatch
 import com.example.data.model.DeliveryPartner
@@ -60,23 +69,109 @@ fun DashboardScreen(
         it.status == "assigned" && !viewModel.isAssignmentHandled(it.id) && !viewModel.isAssignmentExpired(it)
     }
 
-    // New-order alerts need notifications, overlay and full-screen permission (mandatory).
-    val missingAlertPermissions = rememberMissingOrderAlertPermissions()
-    var showAlertSetup by remember { mutableStateOf(false) }
-    if (showAlertSetup) {
-        OrderAlertSetupDialog(missing = missingAlertPermissions, onDismiss = { showAlertSetup = false })
+    // Location, notifications, overlay and full-screen are required to go online; background
+    // location and battery are recommended and asked once per session.
+    val missingRequirements = rememberMissingGoOnlineRequirements()
+    val missingRequired = missingRequirements.filter { it.required }
+    var askedRecommended by rememberSaveable { mutableStateOf(setOf<String>()) }
+    var showSetup by remember { mutableStateOf(false) }
+    val locationProblem by viewModel.locationNotUpdating.collectAsState()
+    val autoOfflineNotice by viewModel.autoOfflineNotice.collectAsState()
+
+    fun openSettings(intent: Intent, fallback: Intent? = null) {
+        try {
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            fallback?.let { runCatching { context.startActivity(it) } }
+        }
     }
 
-    val locationPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        val fineGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true
-        val coarseGranted = permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-        if (fineGranted || coarseGranted) {
-            viewModel.goOnlineWithLocation()
-        } else {
-            viewModel.onLocationPermissionDenied()
+    // A permanently denied runtime permission returns at once with no dialog: open Settings instead.
+    fun onRuntimeDenied(permission: String) {
+        val activity = context.findActivity()
+        if (activity != null && !ActivityCompat.shouldShowRequestPermissionRationale(activity, permission)) {
+            openSettings(GoOnlinePermissions.appDetailsIntent(context))
         }
+    }
+
+    val fineLocationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        if (result[Manifest.permission.ACCESS_FINE_LOCATION] != true) {
+            viewModel.onLocationPermissionDenied()
+            onRuntimeDenied(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+    }
+    val backgroundLocationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (!granted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            onRuntimeDenied(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        }
+    }
+    val notificationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (!granted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            onRuntimeDenied(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    fun request(req: GoOnlineRequirement) {
+        if (!req.required) askedRecommended = askedRecommended + req.name
+        when (req) {
+            GoOnlineRequirement.LOCATION -> fineLocationLauncher.launch(
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+            )
+            GoOnlineRequirement.BACKGROUND_LOCATION -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // Android only allows asking after foreground location; Android 11+ opens the
+                // app's location page where the partner picks "Allow all the time".
+                backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            }
+            GoOnlineRequirement.NOTIFICATIONS -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                // Granted but switched off in the system settings.
+                openSettings(GoOnlinePermissions.settingsIntent(context, req), GoOnlinePermissions.appDetailsIntent(context))
+            }
+            GoOnlineRequirement.BATTERY -> openSettings(
+                GoOnlinePermissions.settingsIntent(context, req),
+                Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+            else -> openSettings(GoOnlinePermissions.settingsIntent(context, req), GoOnlinePermissions.appDetailsIntent(context))
+        }
+    }
+
+    fun closeSetup() {
+        showSetup = false
+        if (GoOnlinePermissions.needsAutostartTip()) viewModel.prefs.autostartTipShown = true
+    }
+
+    /** Toggle on / "Go online": checklist first while anything is missing, then location + RPC. */
+    fun startGoOnline() {
+        val unaskedRecommended = missingRequirements.any { !it.required && it.name !in askedRecommended }
+        if (missingRequired.isNotEmpty() || unaskedRecommended) {
+            showSetup = true
+        } else {
+            viewModel.goOnlineWithLocation()
+        }
+    }
+
+    if (showSetup) {
+        GoOnlineSetupDialog(
+            missing = missingRequirements,
+            showAutostartTip = GoOnlinePermissions.needsAutostartTip() && !viewModel.prefs.autostartTipShown,
+            onRequest = { request(it) },
+            onGoOnline = {
+                askedRecommended = askedRecommended + missingRequirements.filter { !it.required }.map { it.name }
+                closeSetup()
+                viewModel.goOnlineWithLocation()
+            },
+            onDismiss = { closeSetup() }
+        )
     }
 
     LazyColumn(
@@ -86,11 +181,39 @@ fun DashboardScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        if (missingAlertPermissions.isNotEmpty()) {
+        if (autoOfflineNotice && !isOnline) {
+            item {
+                AutoOfflineBanner(
+                    onGoOnline = { startGoOnline() },
+                    onDismiss = { viewModel.dismissAutoOfflineNotice() }
+                )
+            }
+        }
+
+        if (isOnline) {
+            locationProblem?.let { problem ->
+                item {
+                    LocationNotUpdatingBanner(onFix = {
+                        when (problem) {
+                            LocationTracker.Problem.NO_PERMISSION ->
+                                openSettings(GoOnlinePermissions.appDetailsIntent(context))
+                            LocationTracker.Problem.NETWORK ->
+                                viewModel.showMessage("No internet connection. Turn on mobile data or Wi-Fi.")
+                            else -> openSettings(
+                                Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                GoOnlinePermissions.appDetailsIntent(context)
+                            )
+                        }
+                    })
+                }
+            }
+        }
+
+        if (missingRequired.isNotEmpty()) {
             item {
                 OrderAlertSetupBanner(
-                    missingCount = missingAlertPermissions.size,
-                    onFix = { showAlertSetup = true }
+                    missingCount = missingRequired.size,
+                    onFix = { showSetup = true }
                 )
             }
         }
@@ -146,28 +269,8 @@ fun DashboardScreen(
                         Switch(
                             checked = isOnline,
                             onCheckedChange = { targetOnline ->
-                                if (targetOnline && missingAlertPermissions.isNotEmpty()) {
-                                    showAlertSetup = true
-                                } else if (targetOnline) {
-                                    val hasFine = ContextCompat.checkSelfPermission(
-                                        context,
-                                        Manifest.permission.ACCESS_FINE_LOCATION
-                                    ) == PackageManager.PERMISSION_GRANTED
-                                    val hasCoarse = ContextCompat.checkSelfPermission(
-                                        context,
-                                        Manifest.permission.ACCESS_COARSE_LOCATION
-                                    ) == PackageManager.PERMISSION_GRANTED
-
-                                    if (hasFine || hasCoarse) {
-                                        viewModel.goOnlineWithLocation()
-                                    } else {
-                                        locationPermissionLauncher.launch(
-                                            arrayOf(
-                                                Manifest.permission.ACCESS_FINE_LOCATION,
-                                                Manifest.permission.ACCESS_COARSE_LOCATION
-                                            )
-                                        )
-                                    }
+                                if (targetOnline) {
+                                    startGoOnline()
                                 } else {
                                     viewModel.toggleOffline()
                                 }
@@ -542,4 +645,10 @@ fun BatchCard(
             )
         }
     }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

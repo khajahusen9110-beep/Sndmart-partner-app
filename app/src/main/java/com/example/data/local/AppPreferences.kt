@@ -132,6 +132,19 @@ class AppPreferences(context: Context) {
         get() = prefs.getBoolean(KEY_FCM_REGISTERED, false)
         set(value) = prefs.edit().putBoolean(KEY_FCM_REGISTERED, value).apply()
 
+    /**
+     * The partner chose to be online (set on a successful "go online", cleared on "go offline").
+     * Lets the app tell a server-side auto-offline apart from the partner's own choice.
+     */
+    var onlineIntent: Boolean
+        get() = prefs.getBoolean(KEY_ONLINE_INTENT, false)
+        set(value) = prefs.edit().putBoolean(KEY_ONLINE_INTENT, value).apply()
+
+    /** One-time tip about Autostart / background settings on Xiaomi, Vivo, Oppo, Realme. */
+    var autostartTipShown: Boolean
+        get() = prefs.getBoolean(KEY_AUTOSTART_TIP, false)
+        set(value) = prefs.edit().putBoolean(KEY_AUTOSTART_TIP, value).apply()
+
     var soundAlertsEnabled: Boolean
         get() = prefs.getBoolean(KEY_SOUND_ALERTS, true)
         set(value) = prefs.edit().putBoolean(KEY_SOUND_ALERTS, value).apply()
@@ -177,6 +190,7 @@ class AppPreferences(context: Context) {
             .remove(KEY_APPROVAL_STATUS)
             .remove(KEY_FCM_REGISTERED)
             .remove(KEY_HANDLED_ASSIGNMENTS)
+            .remove(KEY_ONLINE_INTENT)
             .putBoolean(KEY_IS_ONLINE, false)
             .apply()
         _authToken.value = null
@@ -209,5 +223,7 @@ class AppPreferences(context: Context) {
         private const val KEY_SOUND_ALERTS = "sound_alerts"
         private const val KEY_EMAIL_CONFIRMED = "email_confirmed"
         private const val KEY_HANDLED_ASSIGNMENTS = "handled_assignments"
+        private const val KEY_ONLINE_INTENT = "online_intent"
+        private const val KEY_AUTOSTART_TIP = "autostart_tip_shown"
     }
 }

@@ -836,6 +836,29 @@ class SupabaseRepository(
         return@withContext null
     }
 
+    /**
+     * The partner's own delivery_partners row straight from the server (is_online,
+     * last_location_at...). Null when it could not be read: unlike [checkPartnerProfile] this
+     * never falls back to cached data, so callers can trust is_online.
+     */
+    suspend fun fetchOwnPartnerRow(): DeliveryPartner? = withContext(Dispatchers.IO) {
+        val userId = prefs.userId ?: return@withContext null
+        if (prefs.token.isNullOrBlank()) return@withContext null
+        try {
+            val response = apiService.getDeliveryPartnerByUserId(
+                apiKey = prefs.customSupabaseKey,
+                bearerToken = bearer(),
+                userIdFilter = "eq.$userId"
+            )
+            val partner = if (response.isSuccessful) response.body()?.firstOrNull() else null
+            if (partner != null) savePartnerLocally(partner)
+            partner
+        } catch (e: Exception) {
+            Log.d("SupabaseRepo", "Own partner row refresh failed: ${e.message}")
+            null
+        }
+    }
+
     suspend fun refreshApprovalStatus(): Result<DeliveryPartner?> = withContext(Dispatchers.IO) {
         try {
             val userId = prefs.userId ?: return@withContext Result.success(null)
@@ -1079,6 +1102,13 @@ class SupabaseRepository(
      */
     suspend fun setOnline(isOnline: Boolean, lat: Double? = null, lng: Double? = null): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
+            // Fresh location first: the server only offers orders to partners whose
+            // last_location_at is recent, so going online without it would receive nothing.
+            if (isOnline && lat != null && lng != null) {
+                updateLocation(lat, lng).onFailure {
+                    return@withContext Result.failure(Exception(it.message ?: "Could not send your location"))
+                }
+            }
             val response = apiService.rpcSetOnline(
                 apiKey = prefs.customSupabaseKey,
                 bearerToken = bearer(),
@@ -1092,7 +1122,6 @@ class SupabaseRepository(
                 // set_online keeps the previous availability (offline clears it); a partner
                 // coming online is available for new orders.
                 setAvailability(true, online = true)
-                if (lat != null && lng != null) updateLocation(lat, lng)
             }
 
             prefs.onlineState = isOnline
@@ -2183,11 +2212,15 @@ class SupabaseRepository(
     fun startRealtimeWatcher() {
         if (pollingJob?.isActive == true) return
         pollingJob = coroutineScope.launch {
+            var tick = 0
             while (isActive) {
                 delay(POLL_INTERVAL_MS)
                 val partner = _currentPartner.value
                 if (partner != null && partner.isOnline && partner.approvalStatus.equals("approved", ignoreCase = true)) {
                     try {
+                        // About once a minute re-read the own row: the server sets partners
+                        // offline when their location goes stale (see MainViewModel).
+                        if (++tick % 3 == 0) fetchOwnPartnerRow()
                         fetchAssignments()
                     } catch (e: Exception) {
                         Log.d("SupabaseRepo", "Assignment poll error: ${e.message}")

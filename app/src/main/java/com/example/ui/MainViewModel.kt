@@ -140,6 +140,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
         const val CURRENT_APP_VERSION = BuildConfig.VERSION_NAME
+        private const val LOCATION_STALE_AFTER_MS = 3 * 60 * 1000L
 
         fun compareVersions(a: String, b: String): Int = com.example.util.compareVersions(a, b)
     }
@@ -152,6 +153,61 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _isUpdateRequired = MutableStateFlow(false)
     val isUpdateRequired: StateFlow<Boolean> = _isUpdateRequired.asStateFlow()
+
+    /**
+     * The server set this partner offline (location stopped updating for 30 min) while the
+     * partner had chosen to be online. Shows "You were set offline..." with a Go online button.
+     */
+    private val _autoOfflineNotice = MutableStateFlow(false)
+    val autoOfflineNotice: StateFlow<Boolean> = _autoOfflineNotice.asStateFlow()
+
+    fun dismissAutoOfflineNotice() {
+        prefs.onlineIntent = false
+        _autoOfflineNotice.value = false
+    }
+
+    @Volatile
+    private var changingOnline = false
+
+    /**
+     * Non-null while online and the server has not accepted a location for 3 minutes; the
+     * value says why, for the "Location is not updating" banner. The server only offers
+     * orders to partners whose location is under 5 minutes old.
+     */
+    val locationNotUpdating: StateFlow<LocationTracker.Problem?> = combine(
+        locationTracker.isTracking,
+        locationTracker.lastPushOkElapsed,
+        locationTracker.problem,
+        flow { while (true) { emit(Unit); delay(15_000L) } }
+    ) { tracking, lastOk, problem, _ ->
+        if (!tracking) return@combine null
+        val since = maxOf(lastOk, locationTracker.trackingStartedElapsed)
+        val stale = android.os.SystemClock.elapsedRealtime() - since > LOCATION_STALE_AFTER_MS
+        if (stale) (if (problem == LocationTracker.Problem.NONE) LocationTracker.Problem.NO_FIX else problem) else null
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    /**
+     * Keeps the UI and tracking in line with the server row: "Online" is shown only when the
+     * server says so. Runs for every server read of the partner (startup, resume, polling).
+     */
+    private fun reconcileWithServer(partner: DeliveryPartner) {
+        val current = _authUiState.value as? AuthUiState.Authenticated ?: return
+        if (changingOnline) return
+        if (partner.isOnline) {
+            _autoOfflineNotice.value = false
+            if (!locationTracker.isTracking.value && locationTracker.hasLocationPermission()) {
+                locationTracker.startTracking()
+            }
+        } else {
+            if (locationTracker.isTracking.value) locationTracker.stopTracking()
+            if (prefs.onlineIntent) _autoOfflineNotice.value = true
+        }
+        if (current.partner.isOnline != partner.isOnline || current.partner.isAvailable != partner.isAvailable) {
+            _authUiState.value = AuthUiState.Authenticated(
+                current.partner.copy(isOnline = partner.isOnline, isAvailable = partner.isAvailable)
+            )
+        }
+    }
 
     /** Set when a newer build exists but is not mandatory; the partner can choose "Later". */
     private val _optionalUpdateInfo = MutableStateFlow<AppVersionInfo?>(null)
@@ -179,6 +235,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         runStartupChecks()
         checkInitialSession()
         loadCities()
+        viewModelScope.launch {
+            repository.currentPartner.filterNotNull().collect { reconcileWithServer(it) }
+        }
     }
 
     fun runStartupChecks() {
@@ -259,6 +318,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (!sessionValid) {
                     endSession("Your session expired, please log in again")
                 } else {
+                    // Read the own row first: the server may have set us offline meanwhile.
+                    repository.fetchOwnPartnerRow()
                     repository.fetchAllBackendData()
                 }
             }
@@ -585,18 +646,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun goOnlineWithLocation() {
         viewModelScope.launch {
+            changingOnline = true
             _isActionLoading.value = true
             // Dispatch assigns by distance, so a real GPS fix is required to go online.
             val fix = locationTracker.getCurrentGpsLocation()
             if (fix == null) {
                 _isActionLoading.value = false
+                changingOnline = false
                 showMessage("Unable to get your GPS location. Turn on location services and try again.")
                 return@launch
             }
             val (lat, lng) = fix
             val res = repository.setOnline(isOnline = true, lat = lat, lng = lng)
             _isActionLoading.value = false
+            changingOnline = false
             res.onSuccess {
+                prefs.onlineIntent = true
+                _autoOfflineNotice.value = false
                 val current = _authUiState.value
                 if (current is AuthUiState.Authenticated) {
                     _authUiState.value = AuthUiState.Authenticated(
@@ -610,7 +676,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     )
                 }
-                locationTracker.startTracking(updateIntervalSeconds = 20L)
+                locationTracker.startTracking()
                 showMessage("You are now ONLINE. Live GPS location active.")
             }.onFailure { err ->
                 showMessage(err.message ?: "Failed to go online")
@@ -620,10 +686,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun toggleOffline() {
         viewModelScope.launch {
+            changingOnline = true
             _isActionLoading.value = true
             locationTracker.stopTracking()
+            prefs.onlineIntent = false
+            _autoOfflineNotice.value = false
             val res = repository.setOnline(isOnline = false)
             _isActionLoading.value = false
+            changingOnline = false
             res.onSuccess {
                 val current = _authUiState.value
                 if (current is AuthUiState.Authenticated) {
