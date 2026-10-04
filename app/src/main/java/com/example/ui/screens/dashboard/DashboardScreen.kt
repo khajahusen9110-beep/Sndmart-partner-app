@@ -69,7 +69,7 @@ fun DashboardScreen(
         it.status == "assigned" && !viewModel.isAssignmentHandled(it.id) && !viewModel.isAssignmentExpired(it)
     }
 
-    // Location, notifications, overlay and full-screen are required to go online; background
+    // Location, notifications and full-screen alerts are required to go online; background
     // location and battery are recommended and asked once per session.
     val missingRequirements = rememberMissingGoOnlineRequirements()
     val missingRequired = missingRequirements.filter { it.required }

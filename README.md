@@ -50,12 +50,13 @@ The backend hardening is split in two migrations under `supabase/migrations/`:
   cancel the notification, which stops the sound. With "Sound alerts" off in Profile the silent
   channel `new_order_silent_v2` (vibration only) is used.
 - **Full screen:** `IncomingOrderActivity`, visual only. Locked / screen off: opened as the
-  notification's full-screen intent. Screen on (any app, including during an active delivery):
-  launched directly, which needs "Display over other apps". Not shown over an ongoing phone call.
-- **Mandatory permissions:** "Display over other apps" and, on Android 14+, full-screen alerts
-  are required to open the app at all: a blocking screen with **Allow** buttons is shown until
-  both are on. Notifications are also required to go online; a red banner on the Dashboard shows
-  while any required permission is missing.
+  notification's full-screen intent. Inside the app: launched directly. In another app: the
+  ringing heads-up notification with Accept / Decline (the app does not use "Display over other
+  apps"). Not shown over an ongoing phone call.
+- **Mandatory permissions:** on Android 14+, full-screen alerts are required to open the app at
+  all: a blocking screen with an **Allow** button is shown until it is on. Notifications are
+  also required to go online; a red banner on the Dashboard shows while any required permission
+  is missing.
 - **Which pushes ring:** a push is a new offer only when it carries a non-empty `assignment_id`
   (or `assignmentId`). Every other push is a normal notification: no full screen, no alarm.
   `order_id` is never used as an assignment id.
@@ -73,7 +74,7 @@ when updates stop for long. While online:
   NOT receive new orders. Tap to fix." (opens app permissions, GPS settings, or says to check
   the internet).
 - Going online asks, in order and with an explanation: location → "Allow all the time"
-  (Android 10+) → notifications (Android 13+) → display over other apps → full-screen alerts →
+  (Android 10+) → notifications (Android 13+) → full-screen alerts →
   "Don't optimize" battery. A one-time Autostart tip is shown on Xiaomi, Vivo, Oppo and Realme phones.
 - Going online sends a fresh location first, then `delivery_partner_set_online(true)`. Going
   offline stops the service and calls `delivery_partner_set_online(false)`.
@@ -100,8 +101,6 @@ when updates stop for long. While online:
   delivery requests (about 60 seconds) that must be accepted or declined. The app shows the
   request full screen, like an incoming call, so partners riding with the phone locked do not
   miss it."* If Google does not grant it, partners are sent to Settings to allow it themselves.
-- **Display over other apps (`SYSTEM_ALERT_WINDOW`):** granted by the partner in Settings.
-  Explain the same use case in the store listing / review notes if asked.
 
 ## Local setup
 

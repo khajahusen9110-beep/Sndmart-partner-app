@@ -13,7 +13,6 @@ import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
-import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.MainActivity
@@ -56,8 +55,8 @@ data class OrderAlert(
  * is therefore the only way to stop the sound: accept, decline, timeout, server cancel.
  *
  * Screen: [IncomingOrderActivity] has no sound of its own. It is opened as the full-screen
- * intent (locked / screen off) and launched directly when the screen is on, which Android
- * allows because the partner granted "Display over other apps".
+ * intent (locked / screen off) and launched directly while the app itself is on screen.
+ * In another app the ringing heads-up notification carries Accept / Decline.
  */
 object OrderAlertNotifier {
     private const val TAG = "OrderAlertNotifier"
@@ -177,10 +176,10 @@ object OrderAlertNotifier {
         }
 
         // Locked / screen off: Android opens the full-screen intent itself.
-        // Screen on (partner using any app): open the screen directly. Allowed from the
-        // background only with "Display over other apps".
-        // Never cover the screen of an ongoing phone call; the heads-up still shows Accept/Decline.
-        if (isScreenOnAndUnlocked(appContext) && Settings.canDrawOverlays(appContext) && !isInCall(appContext)) {
+        // Partner inside this app: open the screen directly. In another app: the ringing
+        // heads-up notification with Accept / Decline (no "Display over other apps").
+        // Never cover the screen of an ongoing phone call.
+        if (MainActivity.isVisible && isScreenOnAndUnlocked(appContext) && !isInCall(appContext)) {
             try {
                 appContext.startActivity(IncomingOrderActivity.intent(appContext, alert))
             } catch (e: Exception) {

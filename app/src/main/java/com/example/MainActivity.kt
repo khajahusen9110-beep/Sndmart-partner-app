@@ -170,12 +170,23 @@ class MainActivity : ComponentActivity() {
         /** "Accept" on the new-order notification. */
         const val ACTION_ACCEPT_ORDER = "com.sndmart.delivery.action.ACCEPT_ORDER"
         const val EXTRA_ASSIGNMENT_ID = "accept_assignment_id"
+
+        /** True while the app is on screen; a new offer then opens full screen directly. */
+        @Volatile
+        var isVisible = false
+            private set
     }
 
     override fun onResume() {
         super.onResume()
+        isVisible = true
         viewModel.onAppResume()
         if (viewModel.isUpdateRequired.value) resumeInterruptedUpdate()
+    }
+
+    override fun onPause() {
+        isVisible = false
+        super.onPause()
     }
 }
 
@@ -239,8 +250,7 @@ fun MainAppRoot(viewModel: MainViewModel, onUpdateApp: () -> Unit = {}) {
         return
     }
 
-    // Display over other apps + full-screen alerts are mandatory: the app stays on this screen
-    // until both are allowed (re-checked whenever the partner comes back from Settings).
+    // Full-screen alerts (Android 14+) are mandatory: the app stays on this screen until allowed (re-checked whenever the partner comes back from Settings).
     val missingGate = rememberMissingGoOnlineRequirements().filter { it in AppGateRequirements }
     if (missingGate.isNotEmpty()) {
         AppPermissionGateScreen(missing = missingGate)

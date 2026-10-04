@@ -40,22 +40,17 @@ import com.example.ui.theme.EmeraldPrimary
 enum class GoOnlineRequirement(val title: String, val why: String, val required: Boolean) {
     LOCATION(
         "Location",
-        "Your location decides which orders you are offered.",
+        "Sndmart Partner collects your location to offer you nearby delivery orders and let customers track their delivery.",
         required = true
     ),
     BACKGROUND_LOCATION(
         "Location: Allow all the time",
-        "Keeps sending your location with the screen off, so orders keep coming.",
+        "While you are online, Sndmart Partner collects your location even when the app is closed or not in use, so you keep receiving nearby orders. It stops when you go offline.",
         required = false
     ),
     NOTIFICATIONS(
         "Notifications",
         "Rings the new order alarm and shows Accept / Decline.",
-        required = true
-    ),
-    OVERLAY(
-        "Display over other apps",
-        "Opens a new order full screen while you use another app.",
         required = true
     ),
     FULL_SCREEN(
@@ -83,8 +78,6 @@ object GoOnlinePermissions {
                 granted(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
         GoOnlineRequirement.NOTIFICATIONS ->
             NotificationManagerCompat.from(context).areNotificationsEnabled()
-        GoOnlineRequirement.OVERLAY ->
-            Settings.canDrawOverlays(context)
         GoOnlineRequirement.FULL_SCREEN ->
             Build.VERSION.SDK_INT < 34 ||
                 context.getSystemService(NotificationManager::class.java).canUseFullScreenIntent()
@@ -105,7 +98,6 @@ object GoOnlinePermissions {
         return when (req) {
             GoOnlineRequirement.NOTIFICATIONS -> Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
                 .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-            GoOnlineRequirement.OVERLAY -> Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkgUri)
             GoOnlineRequirement.FULL_SCREEN -> if (Build.VERSION.SDK_INT >= 34) {
                 Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, pkgUri)
             } else {
@@ -194,7 +186,7 @@ fun GoOnlineSetupDialog(
                 if (showAutostartTip) {
                     Text(
                         "Tip for Xiaomi, Vivo, Oppo, Realme phones: in Settings → Apps → Sndmart Partner, " +
-                            "turn on Autostart and allow \"Display pop-up windows while running in the background\". " +
+                            "turn on Autostart and allow \"Show on lock screen\". " +
                             "Without it the phone may stop the app and you will stop receiving orders.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.outline
@@ -301,11 +293,10 @@ private fun WarningBanner(
 }
 
 /** Permissions without which the app does not open at all (new orders must open full screen). */
-val AppGateRequirements = listOf(GoOnlineRequirement.OVERLAY, GoOnlineRequirement.FULL_SCREEN)
+val AppGateRequirements = listOf(GoOnlineRequirement.FULL_SCREEN)
 
 /**
- * Blocking screen shown instead of the app until "Display over other apps" and, on Android 14+,
- * full-screen alerts are allowed. Re-checked every time the partner returns from Settings.
+ * Blocking screen shown instead of the app until full-screen alerts (Android 14+) are allowed. Re-checked every time the partner returns from Settings.
  */
 @Composable
 fun AppPermissionGateScreen(missing: List<GoOnlineRequirement>) {
@@ -333,8 +324,8 @@ fun AppPermissionGateScreen(missing: List<GoOnlineRequirement>) {
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                "New delivery requests open full screen, like an incoming call, even when you are " +
-                    "using another app or the phone is locked. Allow the permissions below to use the app.",
+                "New delivery requests open full screen, like an incoming call, when the phone is " +
+                    "locked. Allow the permission below to use the app.",
                 style = MaterialTheme.typography.bodyMedium
             )
             Spacer(Modifier.height(24.dp))
