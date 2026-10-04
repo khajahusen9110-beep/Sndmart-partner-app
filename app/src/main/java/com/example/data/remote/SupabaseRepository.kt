@@ -7,6 +7,8 @@ import android.util.Log
 import com.example.BuildConfig
 import com.example.data.local.AppPreferences
 import com.example.data.model.*
+import com.example.service.OrderAlert
+import com.example.service.OrderAlertNotifier
 import com.example.util.parseIsoMillis
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
@@ -171,14 +173,35 @@ class SupabaseRepository(
         cancelIncomingNotification(assignmentId)
     }
 
+    /** Stops the ringing order alert (and closes its full-screen screen) for this offer. */
     fun cancelIncomingNotification(assignmentId: String) {
         try {
-            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-            nm?.cancel(assignmentId.hashCode())
-            nm?.cancel(1001)
+            OrderAlertNotifier.cancel(context, assignmentId)
         } catch (e: Exception) {
             Log.w("SupabaseRepo", "Notification cancel error: ${e.message}")
         }
+    }
+
+    /**
+     * Rings for an offer found by polling, in case its FCM push was missed. The notifier
+     * ignores offers it already alerted for, so a push plus a poll ring only once.
+     */
+    private fun ringForOffer(assignment: DeliveryAssignment) {
+        if (_currentPartner.value?.isOnline != true) return
+        OrderAlertNotifier.show(
+            context,
+            OrderAlert(
+                assignmentId = assignment.id,
+                body = "Order #${assignment.orderNumber}".takeIf { assignment.orderNumber.isNotBlank() }.orEmpty(),
+                storeName = assignment.storeName,
+                storeAddress = assignment.storeAddress,
+                customerAddress = assignment.customerAddress,
+                paymentMode = assignment.paymentMode,
+                totalAmount = assignment.totalAmount.toLong().toString(),
+                deliveryFee = assignment.deliveryFee.toLong().toString(),
+                expiresAtIso = assignment.expiresAt
+            )
+        )
     }
 
     fun isAssignmentExpired(assignment: DeliveryAssignment): Boolean {
@@ -1612,6 +1635,10 @@ class SupabaseRepository(
                             _incomingAssignmentAlert.value = null
                         }
                     }
+                    // ...and stop any alert still ringing for it.
+                    enrichedList
+                        .filter { (it.status != "assigned" || isAssignmentExpired(it)) && OrderAlertNotifier.wasShown(it.id) }
+                        .forEach { cancelIncomingNotification(it.id) }
                     val pending = enrichedList.firstOrNull {
                         it.status == "assigned" &&
                         !isAssignmentHandled(it.id) &&
@@ -1620,6 +1647,7 @@ class SupabaseRepository(
                     if (pending != null && _incomingAssignmentAlert.value == null) {
                         _incomingAssignmentAlert.value = pending
                     }
+                    if (pending != null) ringForOffer(pending)
                 } else {
                     val combined = (_assignments.value + enrichedList).distinctBy { it.id }
                     _assignments.value = combined
@@ -2109,6 +2137,7 @@ class SupabaseRepository(
 
     fun clearData() {
         stopRealtimeWatcher()
+        OrderAlertNotifier.cancelAll(context)
         localStages.clear()
         handledAssignmentIds.clear()
         assignmentsPage = 0

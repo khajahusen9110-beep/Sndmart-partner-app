@@ -5,7 +5,7 @@ package com.example.service
  */
 class SndmartFirebaseMessagingService : DeliveryPartnerFcmService() {
     companion object {
-        const val CHANNEL_INCOMING_ORDERS = "new_delivery_alerts"
+        const val CHANNEL_INCOMING_ORDERS = OrderAlertNotifier.CHANNEL_ALARM
         const val CHANNEL_DELIVERY_UPDATES = "delivery_updates"
     }
 }

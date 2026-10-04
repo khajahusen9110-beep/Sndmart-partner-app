@@ -20,7 +20,8 @@ import com.example.data.local.AppPreferences
 import com.example.data.location.LocationTracker
 import com.example.data.model.*
 import com.example.data.remote.SupabaseRepository
-import com.example.service.DeliveryPartnerFcmService
+import com.example.service.OrderAlert
+import com.example.service.OrderAlertNotifier
 import com.example.service.SndmartFirebaseMessagingService
 import com.example.util.availableForPayout
 import com.example.util.UpdateDecision
@@ -667,12 +668,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun dismissIncomingAlert(assignmentId: String) {
-        DeliveryPartnerFcmService.stopAlertSound()
         repository.dismissIncomingAlert(assignmentId)
     }
 
     fun acceptOrder(assignment: DeliveryAssignment) {
-        DeliveryPartnerFcmService.stopAlertSound()
+        OrderAlertNotifier.cancel(getApplication(), assignment.id)
         viewModelScope.launch {
             _isActionLoading.value = true
             val res = repository.respondToAssignment(
@@ -696,7 +696,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun rejectOrder(assignmentId: String) {
-        DeliveryPartnerFcmService.stopAlertSound()
+        OrderAlertNotifier.cancel(getApplication(), assignmentId)
         viewModelScope.launch {
             _isActionLoading.value = true
             val res = repository.respondToAssignment(assignmentId, accept = false)
@@ -952,80 +952,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Debug-only: rings the real order alert (sound + full-screen) with a fake offer. */
     fun triggerTestIncomingOrderAlert(context: Context) {
-        try {
-            val testAssignmentId = "test_fcm_${System.currentTimeMillis().toString().takeLast(6)}"
-            val title = "New Delivery Available!"
-            val body = "Sndmart DarkStore Hub • Sindhanur (₹60 Earning)"
-
-            val intent = Intent(context, MainActivity::class.java).apply {
-                putExtra("assignment_id", testAssignmentId)
-                putExtra("EXTRA_NAVIGATE_ASSIGNMENT_ID", testAssignmentId)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            }
-            val pendingIntent = PendingIntent.getActivity(
-                context,
-                testAssignmentId.hashCode(),
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-
-            val channelId = "new_delivery_alerts"
-            val notificationManager = context.getSystemService(NotificationManager::class.java)
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val channel = NotificationChannel(
-                    channelId, "New Delivery Alerts", NotificationManager.IMPORTANCE_HIGH
-                ).apply {
-                    enableVibration(true)
-                    vibrationPattern = longArrayOf(0, 1000, 500, 1000, 500, 1000)
-                    setSound(null, null)
-                }
-                notificationManager.createNotificationChannel(channel)
-            }
-
-            val notification = NotificationCompat.Builder(context, channelId)
-                .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle(title)
-                .setContentText(body)
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setCategory(NotificationCompat.CATEGORY_ALARM)
-                .setContentIntent(pendingIntent)
-                .setAutoCancel(true)
-                .setOngoing(false)
-                .setSound(null)
-                .build()
-
-            notificationManager.notify(testAssignmentId.hashCode(), notification)
-
-            // Play continuous 10-second alert sound
-            DeliveryPartnerFcmService.playLongAlertSound(context)
-
-            val testAssignment = DeliveryAssignment(
-                id = testAssignmentId,
-                orderId = "ORD-TEST-${(1000..9999).random()}",
-                orderNumber = "ORD-${(1000..9999).random()}",
-                status = "assigned",
+        val testId = "test_${System.currentTimeMillis()}"
+        val expiresAt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).apply {
+            timeZone = java.util.TimeZone.getTimeZone("UTC")
+        }.format(java.util.Date(System.currentTimeMillis() + 60_000L))
+        OrderAlertNotifier.show(
+            context,
+            OrderAlert(
+                assignmentId = testId,
+                title = "New Delivery Request (TEST)",
                 storeName = "Sndmart DarkStore Hub",
                 storeAddress = "Koppal Road, Main Market, Sindhanur",
-                customerName = "Rahul Sharma",
                 customerAddress = "Ward No 12, Gandhi Nagar, Sindhanur",
-                totalAmount = 520.0,
-                paymentMode = "PREPAID",
-                deliveryFee = 60.0,
-                estimatedPickupDistanceKm = 0.8,
-                estimatedDropDistanceKm = 2.4,
-                itemsSummary = "2x Milk 1L, 1x Brown Bread 400g, 1x Butter 100g",
-                itemCount = 4,
-                expiresInSeconds = 60,
-                createdAt = repository.currentIsoTimestamp()
+                paymentMode = "cash",
+                totalAmount = "520",
+                deliveryFee = "60",
+                expiresAtIso = expiresAt
             )
-            repository.setIncomingAssignmentAlert(testAssignment)
-            showMessage("10-second order alert ringing! Check notification & Dashboard.")
-        } catch (e: Exception) {
-            Log.e("MainViewModel", "Test alert error: ${e.message}", e)
-            showMessage("Test alert failed: ${e.message}")
-        }
+        )
+        showMessage("Test order alert ringing for 60 seconds. Accept/Decline will fail: it is not a real order.")
     }
 
     fun sendTestNotification(context: Context) {
@@ -1105,7 +1052,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun dismissIncomingAlert() {
-        DeliveryPartnerFcmService.stopAlertSound()
+        incomingAssignmentAlert.value?.let { OrderAlertNotifier.cancel(getApplication(), it.id) }
         repository.dismissIncomingAlert()
     }
 
@@ -1140,7 +1087,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun endSession(message: String) {
-        DeliveryPartnerFcmService.stopAlertSound()
+        OrderAlertNotifier.cancelAll(getApplication())
         locationTracker.stopTracking()
         repository.clearData()
         prefs.clearSession()

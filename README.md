@@ -39,6 +39,33 @@ The backend hardening is split in two migrations under `supabase/migrations/`:
   the top of the file), and after checking the customer, vendor and admin apps that share the
   database do not rely on those paths.
 
+## New-order alerts
+
+`OrderAlertNotifier` is the only place that alerts a partner about an offer (FCM push, or the
+20 s polling fallback when a push is missed; the same offer never rings twice):
+
+- **Sound:** the notification itself, on channel `new_order_alarm_v2` (alarm audio, the
+  bundled `order_alert_sound`), with `FLAG_INSISTENT` so it repeats until the offer's
+  `expires_at` (`setTimeoutAfter`). Accept, decline, timeout or the server withdrawing the offer
+  cancel the notification, which stops the sound. With "Sound alerts" off in Profile the silent
+  channel `new_order_silent_v2` (vibration only) is used.
+- **Full screen:** `IncomingOrderActivity`, visual only. Locked / screen off: opened as the
+  notification's full-screen intent. Screen on (any app, including during an active delivery):
+  launched directly, which needs "Display over other apps". Not shown over an ongoing phone call.
+- **Mandatory permissions:** notifications, "Display over other apps" and, on Android 14+,
+  full-screen alerts. The partner cannot go online until all are granted; a red banner on the
+  Dashboard shows while any is missing.
+
+### Play Console declarations
+
+- **Full-screen intent (`USE_FULL_SCREEN_INTENT`), Android 14+:** App content → Full-screen
+  intent → declare the use case. Suggested text: *"Delivery partners receive time-limited
+  delivery requests (about 60 seconds) that must be accepted or declined. The app shows the
+  request full screen, like an incoming call, so partners riding with the phone locked do not
+  miss it."* If Google does not grant it, partners are sent to Settings to allow it themselves.
+- **Display over other apps (`SYSTEM_ALERT_WINDOW`):** granted by the partner in Settings.
+  Explain the same use case in the store listing / review notes if asked.
+
 ## Local setup
 
 1. Copy `.env.example` to `.env` and fill in `SUPABASE_URL`, `SUPABASE_ANON_KEY` and

@@ -4,10 +4,9 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
-import android.media.AudioAttributes
-import android.media.RingtoneManager
 import android.os.Build
 import android.util.Log
+import com.example.service.OrderAlertNotifier
 import com.example.service.SndmartFirebaseMessagingService
 import com.google.firebase.FirebaseApp
 
@@ -44,26 +43,8 @@ class SndmartApplication : Application() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-            val ringtoneSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-                ?: android.provider.Settings.System.DEFAULT_RINGTONE_URI
-            val audioAttributes = AudioAttributes.Builder()
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-                .build()
-
-            // Channel 1: New Delivery Alerts (Step 4 specification)
-            val newAlertsChannel = NotificationChannel(
-                "new_delivery_alerts",
-                "New Delivery Alerts",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "Urgent dispatch alerts for assigned delivery orders"
-                enableVibration(true)
-                vibrationPattern = longArrayOf(0, 800, 400, 800, 400, 800)
-                setSound(null, null)
-                lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
-            }
-            notificationManager.createNotificationChannel(newAlertsChannel)
+            // New order alerts (alarm sound, full-screen) live in OrderAlertNotifier.
+            OrderAlertNotifier.createChannels(this)
 
             // Channel 2: Delivery Updates & Payouts (Default priority)
             val updateChannel = NotificationChannel(

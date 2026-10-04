@@ -2,10 +2,7 @@ package com.example.service
 
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.content.Context
 import android.content.Intent
-import android.media.AudioAttributes
-import android.media.MediaPlayer
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.MainActivity
@@ -25,62 +22,75 @@ open class DeliveryPartnerFcmService : FirebaseMessagingService() {
         super.onMessageReceived(message)
         Log.d(TAG, "FCM message received from: ${message.from}")
 
-        val assignmentId = message.data["assignment_id"] ?: message.data["assignmentId"] ?: ""
-        val isNewOrder = assignmentId.isNotBlank()
-        val title = message.data["title"] ?: message.notification?.title
-            ?: if (isNewOrder) "New Delivery Available!" else "Sndmart"
-        val body = message.data["message"] ?: message.data["body"] ?: message.notification?.body
-            ?: if (isNewOrder) "A new delivery is available near you" else ""
+        val data = message.data
+        val assignmentId = data["assignment_id"] ?: data["assignmentId"] ?: ""
+        val title = data["title"] ?: message.notification?.title
+            ?: if (assignmentId.isNotBlank()) "New Delivery Request" else "Sndmart"
+        val body = data["message"] ?: data["body"] ?: message.notification?.body ?: ""
+        val repo = SupabaseRepository.getInstance(applicationContext)
 
-        val intent = Intent(this, MainActivity::class.java).apply {
-            if (isNewOrder) {
-                putExtra("assignment_id", assignmentId)
-                putExtra("EXTRA_NAVIGATE_ASSIGNMENT_ID", assignmentId)
+        if (assignmentId.isBlank()) {
+            showInfoNotification(title, body)
+            repo.addNotification(title, body, "info")
+            return
+        }
+
+        // New order: sound + full-screen come from OrderAlertNotifier only.
+        if (!repo.isAssignmentHandled(assignmentId)) {
+            OrderAlertNotifier.show(
+                applicationContext,
+                OrderAlert(
+                    assignmentId = assignmentId,
+                    title = title,
+                    body = body,
+                    storeName = data["store_name"].orEmpty(),
+                    storeAddress = data["store_address"].orEmpty(),
+                    customerAddress = data["customer_address"].orEmpty(),
+                    paymentMode = data["payment_mode"].orEmpty(),
+                    totalAmount = data["total_amount"].orEmpty(),
+                    deliveryFee = data["delivery_fee"].orEmpty(),
+                    expiresAtIso = data["expires_at"]
+                )
+            )
+        }
+        repo.addNotification(title, body, "order")
+
+        serviceScope.launch {
+            try {
+                val target = repo.fetchAssignments().find { it.id == assignmentId }
+                when {
+                    target == null -> Unit
+                    target.status == "assigned" -> repo.setIncomingAssignmentAlert(target)
+                    // Already taken back, cancelled or expired on the server: stop ringing.
+                    else -> OrderAlertNotifier.cancel(applicationContext, assignmentId)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error syncing assignments on push: ${e.message}")
             }
+        }
+    }
+
+    private fun showInfoNotification(title: String, body: String) {
+        val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
-        val notifyId = if (isNewOrder) assignmentId.hashCode() else (title + body).hashCode()
+        val notifyId = (title + body).hashCode()
         val pendingIntent = PendingIntent.getActivity(
-            this,
-            notifyId,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            this, notifyId, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-
-        // Channels are created in SndmartApplication.
-        val channelId = if (isNewOrder) SndmartFirebaseMessagingService.CHANNEL_INCOMING_ORDERS
-        else SndmartFirebaseMessagingService.CHANNEL_DELIVERY_UPDATES
-
-        val notification = NotificationCompat.Builder(this, channelId)
+        val notification = NotificationCompat.Builder(this, SndmartFirebaseMessagingService.CHANNEL_DELIVERY_UPDATES)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-            .setPriority(if (isNewOrder) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT)
-            .setCategory(if (isNewOrder) NotificationCompat.CATEGORY_CALL else NotificationCompat.CATEGORY_STATUS)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
             .build()
-
-        getSystemService(NotificationManager::class.java).notify(notifyId, notification)
-
-        if (isNewOrder && AppPreferences(applicationContext).soundAlertsEnabled) {
-            playLongAlertSound(this)
-        }
-
-        val repo = SupabaseRepository.getInstance(applicationContext)
-        repo.addNotification(title, body, if (isNewOrder) "order" else "info")
-        if (isNewOrder) {
-            serviceScope.launch {
-                try {
-                    val target = repo.fetchAssignments().find { it.id == assignmentId }
-                    if (target != null && target.status == "assigned") {
-                        repo.setIncomingAssignmentAlert(target)
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error syncing assignments on push: ${e.message}")
-                }
-            }
+        try {
+            getSystemService(NotificationManager::class.java).notify(notifyId, notification)
+        } catch (e: SecurityException) {
+            Log.w(TAG, "Notification permission missing: ${e.message}")
         }
     }
 
@@ -98,48 +108,5 @@ open class DeliveryPartnerFcmService : FirebaseMessagingService() {
         private const val TAG = "DeliveryPartnerFcm"
         private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-        private val playerLock = Any()
-        private var activePlayer: MediaPlayer? = null
-
-        /** Plays the ~10s new-order alert once. A new alert replaces one that is still ringing. */
-        fun playLongAlertSound(context: Context) {
-            synchronized(playerLock) {
-                stopAlertSoundLocked()
-                try {
-                    val afd = context.resources.openRawResourceFd(R.raw.order_alert_sound)
-                    val player = MediaPlayer()
-                    afd.use { player.setDataSource(it.fileDescriptor, it.startOffset, it.length) }
-                    player.setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                            .build()
-                    )
-                    player.isLooping = false
-                    player.setOnCompletionListener { stopAlertSound() }
-                    player.prepare()
-                    player.start()
-                    activePlayer = player
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to play alert sound", e)
-                }
-            }
-        }
-
-        /** Stops the alert, e.g. when the partner accepts or declines the order. */
-        fun stopAlertSound() {
-            synchronized(playerLock) { stopAlertSoundLocked() }
-        }
-
-        private fun stopAlertSoundLocked() {
-            activePlayer?.let {
-                try {
-                    if (it.isPlaying) it.stop()
-                } catch (_: IllegalStateException) {
-                }
-                it.release()
-            }
-            activePlayer = null
-        }
     }
 }

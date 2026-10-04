@@ -146,6 +146,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleNavigateIntent(intent: Intent?) {
+        if (intent?.action == ACTION_ACCEPT_ORDER) {
+            val id = intent.getStringExtra(EXTRA_ASSIGNMENT_ID).orEmpty()
+            // Consume it so a configuration change does not accept twice.
+            intent.action = null
+            if (id.isNotBlank()) viewModel.respondToAssignment(id, accept = true)
+            return
+        }
         val assignmentId = intent?.getStringExtra("assignment_id")
             ?: intent?.getStringExtra("assignmentId")
             ?: intent?.getStringExtra("EXTRA_NAVIGATE_ASSIGNMENT_ID")
@@ -154,6 +161,12 @@ class MainActivity : ComponentActivity() {
         if (!assignmentId.isNullOrBlank()) {
             viewModel.handleIncomingNotificationClick(assignmentId)
         }
+    }
+
+    companion object {
+        /** "Accept" on the new-order notification. */
+        const val ACTION_ACCEPT_ORDER = "com.sndmart.delivery.action.ACCEPT_ORDER"
+        const val EXTRA_ASSIGNMENT_ID = "accept_assignment_id"
     }
 
     override fun onResume() {

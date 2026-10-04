@@ -60,6 +60,13 @@ fun DashboardScreen(
         it.status == "assigned" && !viewModel.isAssignmentHandled(it.id) && !viewModel.isAssignmentExpired(it)
     }
 
+    // New-order alerts need notifications, overlay and full-screen permission (mandatory).
+    val missingAlertPermissions = rememberMissingOrderAlertPermissions()
+    var showAlertSetup by remember { mutableStateOf(false) }
+    if (showAlertSetup) {
+        OrderAlertSetupDialog(missing = missingAlertPermissions, onDismiss = { showAlertSetup = false })
+    }
+
     val locationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -79,6 +86,15 @@ fun DashboardScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        if (missingAlertPermissions.isNotEmpty()) {
+            item {
+                OrderAlertSetupBanner(
+                    missingCount = missingAlertPermissions.size,
+                    onFix = { showAlertSetup = true }
+                )
+            }
+        }
+
         // Realtime Incoming Order Alert Banner on Home Tab with 60s live countdown
         pendingOrder?.let { alert ->
             item {
@@ -129,7 +145,9 @@ fun DashboardScreen(
                         Switch(
                             checked = isOnline,
                             onCheckedChange = { targetOnline ->
-                                if (targetOnline) {
+                                if (targetOnline && missingAlertPermissions.isNotEmpty()) {
+                                    showAlertSetup = true
+                                } else if (targetOnline) {
                                     val hasFine = ContextCompat.checkSelfPermission(
                                         context,
                                         Manifest.permission.ACCESS_FINE_LOCATION
