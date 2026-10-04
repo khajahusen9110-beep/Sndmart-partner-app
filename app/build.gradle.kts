@@ -139,6 +139,8 @@ dependencies {
   implementation(libs.play.services.location)
   implementation(libs.play.services.maps)
   implementation(libs.play.app.update.ktx)
+  // play app-update pulls in an old androidx.fragment that breaks ActivityResult APIs.
+  implementation(libs.androidx.fragment.ktx)
   implementation(libs.retrofit)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)

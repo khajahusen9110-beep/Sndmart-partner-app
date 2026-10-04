@@ -23,8 +23,9 @@ jobs:
 
       # Compiles the whole app (no secrets needed: .env.example and a missing
       # google-services.json are tolerated for debug builds).
-      - name: Debug build and unit tests
-        run: ./gradlew assembleDebug testDebugUnitTest --stacktrace
+      # lintVitalRelease is the lint gate the signed release build runs.
+      - name: Debug build, release lint and unit tests
+        run: ./gradlew assembleDebug lintVitalRelease testDebugUnitTest --stacktrace
 
       - name: Upload test reports
         if: failure()
