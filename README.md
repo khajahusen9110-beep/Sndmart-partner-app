@@ -118,8 +118,9 @@ SHA-1 stable across machines), otherwise the default Android debug key. Debug-on
 CI (`.github/workflows/main.yml`) runs unit tests on every push and pull request, and on
 `main` builds a signed APK + AAB. Required repository secrets: `GOOGLE_SERVICES_JSON`,
 `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_PASSWORD`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
-`GOOGLE_MAPS_API_KEY`. Optional repository variable `VERSION_NAME` (default `1.1.0`);
-`versionCode` is the workflow run number.
+`GOOGLE_MAPS_API_KEY`. `versionCode` / `versionName` come from `app/build.gradle.kts`
+(first Play upload: code `1`, name `1.1.0`), overridable by the repository variables
+`VERSION_CODE` / `VERSION_NAME` or the inputs of a manual "Run workflow".
 
 ### Shipping an update and making it required
 
@@ -138,8 +139,9 @@ Store, once Play offers the new build to that device), otherwise the Play Store 
 
 Release steps:
 
-1. Set the repository variable `VERSION_NAME` to the new version (for example `1.2.0`) and
-   run the workflow on `main`. `versionCode` is the run number, so it always increases.
+1. Raise `versionCode` (for example `1` → `2`) and `versionName` (for example `1.2.0`) in
+   `app/build.gradle.kts` and push to `main`, or run the workflow with those inputs. Play
+   rejects a `versionCode` it has already received.
 2. Upload the AAB to Play Console and wait until the release is live.
 3. Point the app at it:
 

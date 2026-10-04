@@ -31,11 +31,11 @@ android {
     applicationId = "com.sndmart.delivery"
     minSdk = 24
     targetSdk = 36
-    // CI passes VERSION_CODE / VERSION_NAME; local builds fall back to the defaults below.
-    // VERSION_NAME is also what the force-update check compares against app_versions.
-    // 1.1.0 = RPC-only release. Every partner must be on it before the Phase 2 migration.
-    versionCode = (System.getenv("VERSION_CODE") ?: "2").toInt()
-    versionName = System.getenv("VERSION_NAME") ?: "1.1.0"
+    // Bump versionCode for every Play upload (or pass VERSION_CODE from CI); Play rejects a
+    // code it has already seen. VERSION_NAME is what the force-update check compares against
+    // app_versions. 1.1.0 = RPC-only release; every partner must be on it before Phase 2.
+    versionCode = System.getenv("VERSION_CODE")?.takeIf { it.isNotBlank() }?.toInt() ?: 1
+    versionName = System.getenv("VERSION_NAME")?.takeIf { it.isNotBlank() } ?: "1.1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     // The manifest needs this placeholder in every variant (including unit-test manifests);

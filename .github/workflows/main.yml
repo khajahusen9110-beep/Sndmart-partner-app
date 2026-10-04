@@ -4,6 +4,13 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      version_code:
+        description: "versionCode (empty = value in app/build.gradle.kts). Must be higher than the last Play upload."
+        required: false
+      version_name:
+        description: "versionName (empty = repository variable VERSION_NAME, else app/build.gradle.kts)"
+        required: false
 
 jobs:
   test:
@@ -43,8 +50,9 @@ jobs:
     env:
       # Play Store needs a strictly increasing versionCode; VERSION_NAME is what the
       # force-update check compares against app_versions.minimum_supported_version.
-      VERSION_CODE: ${{ github.run_number }}
-      VERSION_NAME: ${{ vars.VERSION_NAME || '1.1.0' }}
+      # Empty values fall back to the defaults in app/build.gradle.kts.
+      VERSION_CODE: ${{ inputs.version_code || vars.VERSION_CODE || '' }}
+      VERSION_NAME: ${{ inputs.version_name || vars.VERSION_NAME || '' }}
 
     steps:
       - name: Checkout
