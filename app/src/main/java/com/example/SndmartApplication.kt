@@ -7,6 +7,7 @@ import android.content.Context
 import android.os.Build
 import android.util.Log
 import com.example.service.OrderAlertNotifier
+import com.example.util.ServerClock
 import com.example.service.SndmartFirebaseMessagingService
 import com.google.firebase.FirebaseApp
 
@@ -14,6 +15,7 @@ class SndmartApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        ServerClock.init(this)
 
         // 1. Initialize Firebase App safely
         try {

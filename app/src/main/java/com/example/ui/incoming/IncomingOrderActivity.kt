@@ -1,5 +1,6 @@
 package com.example.ui.incoming
 
+import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -35,6 +36,7 @@ import com.example.service.OrderAlert
 import com.example.service.OrderAlertNotifier
 import com.example.ui.theme.EmeraldPrimary
 import com.example.ui.theme.MyApplicationTheme
+import com.example.util.ServerClock
 import com.example.util.isCashOnDelivery
 import java.lang.ref.WeakReference
 import kotlinx.coroutines.CoroutineScope
@@ -117,6 +119,11 @@ class IncomingOrderActivity : ComponentActivity() {
             result.onSuccess {
                 OrderAlertNotifier.cancel(this@IncomingOrderActivity, a.assignmentId)
                 if (accept) {
+                    // On the lock screen, ask for unlock so the app opens on the accepted order.
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        getSystemService(KeyguardManager::class.java)
+                            ?.requestDismissKeyguard(this@IncomingOrderActivity, null)
+                    }
                     startActivity(
                         Intent(this@IncomingOrderActivity, MainActivity::class.java).apply {
                             putExtra("EXTRA_NAVIGATE_ASSIGNMENT_ID", a.assignmentId)
@@ -138,7 +145,7 @@ class IncomingOrderActivity : ComponentActivity() {
         // Same as the in-app offer card: an unanswered offer is declined so it is reassigned.
         // Runs outside lifecycleScope because the screen closes right away.
         backgroundScope.launch {
-            SupabaseRepository.getInstance(this@IncomingOrderActivity).respondToAssignment(a.assignmentId, accept = false)
+            SupabaseRepository.getInstance(this@IncomingOrderActivity).declineExpiredOffer(a.assignmentId)
         }
         finish()
     }
@@ -197,6 +204,9 @@ class IncomingOrderActivity : ComponentActivity() {
         fun closeIfShowing(assignmentId: String) {
             val activity = current?.get() ?: return
             activity.runOnUiThread {
+                // While this screen is answering the offer itself it finishes on its own after the
+                // server replies (and opens the app on accept); closing it early would skip that.
+                if (activity.busy) return@runOnUiThread
                 if (activity.alert?.assignmentId == assignmentId && !activity.isFinishing) activity.finish()
             }
         }
@@ -214,12 +224,12 @@ private fun IncomingOrderScreen(
 ) {
     val expiresAt = remember(alert.assignmentId) { alert.expiresAtMillis() }
     var secondsLeft by remember(alert.assignmentId) {
-        mutableLongStateOf(((expiresAt - System.currentTimeMillis()) / 1000).coerceAtLeast(0))
+        mutableLongStateOf(((expiresAt - ServerClock.now()) / 1000).coerceAtLeast(0))
     }
     LaunchedEffect(alert.assignmentId) {
         while (secondsLeft > 0) {
             delay(1_000)
-            secondsLeft = ((expiresAt - System.currentTimeMillis()) / 1000).coerceAtLeast(0)
+            secondsLeft = ((expiresAt - ServerClock.now()) / 1000).coerceAtLeast(0)
         }
         onTimeout()
     }

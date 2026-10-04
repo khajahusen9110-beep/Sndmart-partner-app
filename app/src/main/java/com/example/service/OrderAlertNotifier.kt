@@ -20,6 +20,7 @@ import com.example.MainActivity
 import com.example.R
 import com.example.data.local.AppPreferences
 import com.example.ui.incoming.IncomingOrderActivity
+import com.example.util.ServerClock
 import com.example.util.parseIsoMillis
 import java.util.Collections
 
@@ -37,7 +38,8 @@ data class OrderAlert(
     val expiresAtIso: String? = null
 ) {
     /** When the offer ends; falls back to [DEFAULT_WINDOW_MS] if the server sent no expiry. */
-    fun expiresAtMillis(now: Long = System.currentTimeMillis()): Long =
+    /** Expiry on the server's clock; compare with [ServerClock.now]. */
+    fun expiresAtMillis(now: Long = ServerClock.now()): Long =
         parseIsoMillis(expiresAtIso) ?: (now + DEFAULT_WINDOW_MS)
 
     companion object {
@@ -112,7 +114,7 @@ object OrderAlertNotifier {
     fun show(context: Context, alert: OrderAlert) {
         val appContext = context.applicationContext
         if (alert.assignmentId.isBlank()) return
-        val remaining = alert.expiresAtMillis() - System.currentTimeMillis()
+        val remaining = alert.expiresAtMillis() - ServerClock.now()
         if (remaining <= 1_000L) return
         if (!shownIds.add(alert.assignmentId)) return
 

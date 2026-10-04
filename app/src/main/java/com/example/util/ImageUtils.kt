@@ -23,6 +23,15 @@ object ImageUtils {
      * Uses inSampleSize sampling to avoid OutOfMemoryError on large photos,
      * corrects orientation using EXIF data, and compresses to JPEG under 1MB.
      */
+    /** Empty file in the app cache for a full-resolution camera capture (shared via FileProvider). */
+    fun newCaptureUri(context: Context): Uri {
+        val dir = java.io.File(context.cacheDir, "proof_photos").apply { mkdirs() }
+        // Keep the cache small: drop captures older than a day.
+        dir.listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > 86_400_000L }?.forEach { it.delete() }
+        val file = java.io.File(dir, "capture-${System.currentTimeMillis()}.jpg")
+        return androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    }
+
     fun compressAndResizeUri(
         context: Context,
         uri: Uri,

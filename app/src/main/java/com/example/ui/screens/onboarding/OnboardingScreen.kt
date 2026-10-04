@@ -35,6 +35,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.BuildConfig
 import com.example.ui.MainViewModel
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import com.example.util.ImageUtils
 import com.example.ui.theme.*
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
@@ -126,7 +129,11 @@ fun OnboardingScreen(
             coroutineScope.launch {
                 isUploadingAadhar = true
                 try {
-                    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    // Re-encode as a resized JPEG off the main thread: picked photos can be
+                    // 10+ MB and HEIC/PNG, while the upload is stored as image/jpeg.
+                    val bytes = withContext(Dispatchers.IO) {
+                        ImageUtils.compressAndResizeUri(context, uri, maxDimension = 2000)
+                    }
                     if (bytes != null && bytes.isNotEmpty()) {
                         val result = viewModel.uploadKycDocument("aadhar", bytes)
                         result.onSuccess { path ->
@@ -155,7 +162,11 @@ fun OnboardingScreen(
             coroutineScope.launch {
                 isUploadingLicence = true
                 try {
-                    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    // Re-encode as a resized JPEG off the main thread: picked photos can be
+                    // 10+ MB and HEIC/PNG, while the upload is stored as image/jpeg.
+                    val bytes = withContext(Dispatchers.IO) {
+                        ImageUtils.compressAndResizeUri(context, uri, maxDimension = 2000)
+                    }
                     if (bytes != null && bytes.isNotEmpty()) {
                         val result = viewModel.uploadKycDocument("license", bytes)
                         result.onSuccess { path ->

@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.DeliveryAssignment
 import com.example.ui.theme.*
+import com.example.util.ServerClock
 import com.example.util.parseIsoMillis
 import kotlinx.coroutines.delay
 import java.util.*
@@ -28,7 +29,8 @@ fun PendingAssignmentCard(
     assignment: DeliveryAssignment,
     onAccept: () -> Unit,
     onReject: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onTimeout: () -> Unit = onReject
 ) {
     val initialSeconds = remember(assignment.id) {
         calculateRemainingWindow(assignment.expiresAt, assignment.assignedAt ?: assignment.createdAt, assignment.expiresInSeconds)
@@ -41,7 +43,7 @@ fun PendingAssignmentCard(
             secondsLeft -= 1
         }
         if (secondsLeft <= 0) {
-            onReject()
+            onTimeout()
         }
     }
 
@@ -325,7 +327,7 @@ fun PendingAssignmentCard(
 }
 
 private fun calculateRemainingWindow(expiresAtIso: String?, createdAtIso: String?, defaultDuration: Int = 60): Int {
-    val now = System.currentTimeMillis()
+    val now = ServerClock.now()
     parseIsoMillis(expiresAtIso)?.let { return ((it - now) / 1000).toInt().coerceIn(0, 120) }
     parseIsoMillis(createdAtIso)?.let {
         val window = defaultDuration.coerceIn(30, 120)

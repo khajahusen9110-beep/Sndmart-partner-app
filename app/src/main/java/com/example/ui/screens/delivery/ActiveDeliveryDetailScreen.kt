@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -133,18 +134,33 @@ fun ActiveDeliveryDetailScreen(
     }
 
     // Safe pickup camera & photo picker launchers
+    // Full-resolution capture into a FileProvider file (TakePicturePreview only returns a
+    // thumbnail, too small to serve as delivery proof). Saveable: survives the camera app
+    // pushing this screen out of memory.
+    var pickupCaptureUri by rememberSaveable { mutableStateOf<String?>(null) }
     val pickupCameraLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicturePreview()
-    ) { bitmap ->
-        if (bitmap != null) {
+        contract = ActivityResultContracts.TakePicture()
+    ) { saved ->
+        val uri = pickupCaptureUri?.let(Uri::parse)
+        if (saved && uri != null) {
             try {
-                val compressed = ImageUtils.compressAndResizeBitmap(bitmap)
-                startPickupPhotoUpload(compressed)
+                val compressed = ImageUtils.compressAndResizeUri(context, uri)
+                if (compressed != null && compressed.isNotEmpty()) {
+                    startPickupPhotoUpload(compressed)
+                } else {
+                    viewModel.showMessage("Unable to read the photo, please try again")
+                }
             } catch (e: Exception) {
-                Log.e("ActiveDeliveryDetail", "Failed to compress pickup photo: ${e.message}", e)
+                Log.e("ActiveDeliveryDetail", "Failed to process pickup photo: ${e.message}", e)
                 viewModel.showMessage("Failed to process photo: ${e.message}")
             }
         }
+    }
+
+    fun launchPickupCamera() {
+        val uri = ImageUtils.newCaptureUri(context)
+        pickupCaptureUri = uri.toString()
+        pickupCameraLauncher.launch(uri)
     }
 
     val pickupCameraPermissionLauncher = rememberLauncherForActivityResult(
@@ -152,7 +168,7 @@ fun ActiveDeliveryDetailScreen(
     ) { isGranted ->
         if (isGranted) {
             try {
-                pickupCameraLauncher.launch(null)
+                launchPickupCamera()
             } catch (e: ActivityNotFoundException) {
                 Log.e("ActiveDeliveryDetail", "No camera app found: ${e.message}", e)
                 viewModel.showMessage("No camera app found on device. Please select from gallery.")
@@ -191,7 +207,7 @@ fun ActiveDeliveryDetailScreen(
             ) == PackageManager.PERMISSION_GRANTED
 
             if (hasCameraPermission) {
-                pickupCameraLauncher.launch(null)
+                launchPickupCamera()
             } else {
                 pickupCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
             }
@@ -233,17 +249,33 @@ fun ActiveDeliveryDetailScreen(
     }
 
     // Safe doorstep photo launchers
+    // Full-resolution capture into a FileProvider file (TakePicturePreview only returns a
+    // thumbnail, too small to serve as delivery proof). Saveable: survives the camera app
+    // pushing this screen out of memory.
+    var dropCaptureUri by rememberSaveable { mutableStateOf<String?>(null) }
     val dropCameraLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicturePreview()
-    ) { bitmap ->
-        if (bitmap != null) {
+        contract = ActivityResultContracts.TakePicture()
+    ) { saved ->
+        val uri = dropCaptureUri?.let(Uri::parse)
+        if (saved && uri != null) {
             try {
-                val compressed = ImageUtils.compressAndResizeBitmap(bitmap)
-                startDropPhotoUpload(compressed)
+                val compressed = ImageUtils.compressAndResizeUri(context, uri)
+                if (compressed != null && compressed.isNotEmpty()) {
+                    startDropPhotoUpload(compressed)
+                } else {
+                    viewModel.showMessage("Unable to read the photo, please try again")
+                }
             } catch (e: Exception) {
+                Log.e("ActiveDeliveryDetail", "Failed to process drop photo: ${e.message}", e)
                 viewModel.showMessage("Failed to process photo: ${e.message}")
             }
         }
+    }
+
+    fun launchDropCamera() {
+        val uri = ImageUtils.newCaptureUri(context)
+        dropCaptureUri = uri.toString()
+        dropCameraLauncher.launch(uri)
     }
 
     val dropCameraPermissionLauncher = rememberLauncherForActivityResult(
@@ -251,7 +283,7 @@ fun ActiveDeliveryDetailScreen(
     ) { isGranted ->
         if (isGranted) {
             try {
-                dropCameraLauncher.launch(null)
+                launchDropCamera()
             } catch (e: ActivityNotFoundException) {
                 viewModel.showMessage("No camera app found on device. Please select from gallery.")
             } catch (e: Exception) {
@@ -285,7 +317,7 @@ fun ActiveDeliveryDetailScreen(
             ) == PackageManager.PERMISSION_GRANTED
 
             if (hasCameraPermission) {
-                dropCameraLauncher.launch(null)
+                launchDropCamera()
             } else {
                 dropCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
             }

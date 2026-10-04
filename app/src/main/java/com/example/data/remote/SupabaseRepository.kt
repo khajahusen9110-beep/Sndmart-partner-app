@@ -9,6 +9,7 @@ import com.example.data.local.AppPreferences
 import com.example.data.model.*
 import com.example.service.OrderAlert
 import com.example.service.OrderAlertNotifier
+import com.example.util.ServerClock
 import com.example.util.parseIsoMillis
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
@@ -78,6 +79,10 @@ class SupabaseRepository(
                     }
                 }
                 null
+            }
+            // Learn the server clock from every response (see ServerClock).
+            .addNetworkInterceptor { chain ->
+                chain.proceed(chain.request()).also { ServerClock.onServerDate(it.header("Date")) }
             }
             .addInterceptor(HttpLoggingInterceptor().apply {
                 // Bodies carry passwords, OTPs and tokens: only log them in debug builds.
@@ -205,7 +210,7 @@ class SupabaseRepository(
     }
 
     fun isAssignmentExpired(assignment: DeliveryAssignment): Boolean {
-        val now = System.currentTimeMillis()
+        val now = ServerClock.now()
         val expiresAt = parseIsoMillis(assignment.expiresAt)
         if (expiresAt != null) return now >= expiresAt
         // Server did not set expires_at: fall back to the offer window from creation time.
@@ -1185,7 +1190,9 @@ class SupabaseRepository(
                 bearerToken = bearer(),
                 params = mapOf("p_assignment_id" to assignmentId, "p_accept" to accept)
             )
-            dismissIncomingAlert(assignmentId)
+            // Stop the alert once the server has decided (success, or 4xx such as "already
+            // processed"). A 5xx keeps it ringing so the partner can retry while the offer lasts.
+            if (response.isSuccessful || response.code() in 400..499) dismissIncomingAlert(assignmentId)
             if (!response.isSuccessful) {
                 val msg = errorMessage(response, if (accept) "Could not accept order" else "Could not decline order")
                 Log.e("SupabaseRepo", "respondToAssignment($assignmentId, $accept) failed: $msg")
@@ -1213,6 +1220,19 @@ class SupabaseRepository(
             Log.e("SupabaseRepo", "respondToAssignment error: ${e.message}", e)
             Result.failure(e)
         }
+    }
+
+    /**
+     * Declines an offer whose time ran out so the server reassigns it. The in-app card and the
+     * full-screen screen can both time out; only the first call does anything.
+     */
+    suspend fun declineExpiredOffer(assignmentId: String) {
+        if (assignmentId.isBlank() || isAssignmentHandled(assignmentId)) return
+        markAssignmentHandled(assignmentId)
+        cancelIncomingNotification(assignmentId)
+        if (_incomingAssignmentAlert.value?.id == assignmentId) _incomingAssignmentAlert.value = null
+        respondToAssignment(assignmentId, accept = false)
+            .onFailure { Log.d("SupabaseRepo", "Expired offer decline: ${it.message}") }
     }
 
     // Proof photo upload to Supabase storage bucket 'delivery-proof-photos'

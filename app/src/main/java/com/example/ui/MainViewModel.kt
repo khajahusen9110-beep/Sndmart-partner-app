@@ -695,6 +695,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** The offer card's countdown reached zero. Silent: no message for the partner. */
+    fun onOfferTimeout(assignmentId: String) {
+        viewModelScope.launch { repository.declineExpiredOffer(assignmentId) }
+    }
+
     fun rejectOrder(assignmentId: String) {
         OrderAlertNotifier.cancel(getApplication(), assignmentId)
         viewModelScope.launch {

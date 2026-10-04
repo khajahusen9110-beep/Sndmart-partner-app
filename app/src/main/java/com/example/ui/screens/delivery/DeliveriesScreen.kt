@@ -105,7 +105,8 @@ fun DeliveriesScreen(
                                     PendingAssignmentCard(
                                         assignment = alert,
                                         onAccept = { viewModel.acceptOrder(alert) },
-                                        onReject = { viewModel.rejectOrder(alert.id) }
+                                        onReject = { viewModel.rejectOrder(alert.id) },
+                                        onTimeout = { viewModel.onOfferTimeout(alert.id) }
                                     )
                                 }
                             }

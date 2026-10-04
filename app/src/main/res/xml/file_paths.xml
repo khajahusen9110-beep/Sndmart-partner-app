@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Full-resolution proof photos taken with the camera app (see ImageUtils.newCaptureUri). -->
+<paths>
+    <cache-path name="proof_photos" path="proof_photos/" />
+</paths>

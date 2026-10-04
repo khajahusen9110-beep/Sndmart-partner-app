@@ -40,7 +40,9 @@ class LocationTrackingService : Service() {
             Log.w(TAG, "Unable to enter foreground: ${e.message}")
             stopSelf()
         }
-        return START_STICKY
+        // Not sticky: after process death there is no tracker to keep alive; the app restarts
+        // tracking itself when the partner opens it while online.
+        return START_NOT_STICKY
     }
 
     private fun buildNotification(): Notification {

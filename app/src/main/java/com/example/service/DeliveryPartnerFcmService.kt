@@ -9,6 +9,7 @@ import com.example.MainActivity
 import com.example.R
 import com.example.data.local.AppPreferences
 import com.example.data.remote.SupabaseRepository
+import com.example.util.newOfferAssignmentId
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import kotlinx.coroutines.CoroutineScope
@@ -23,7 +24,7 @@ open class DeliveryPartnerFcmService : FirebaseMessagingService() {
         Log.d(TAG, "FCM message received from: ${message.from}")
 
         val data = message.data
-        val assignmentId = data["assignment_id"] ?: data["assignmentId"] ?: ""
+        val assignmentId = newOfferAssignmentId(data)
         val title = data["title"] ?: message.notification?.title
             ?: if (assignmentId.isNotBlank()) "New Delivery Request" else "Sndmart"
         val body = data["message"] ?: data["body"] ?: message.notification?.body ?: ""

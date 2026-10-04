@@ -149,7 +149,6 @@ class LocationTracker private constructor(
             try {
                 val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, updateIntervalSeconds * 1000L)
                     .setMinUpdateIntervalMillis(10_000L)
-                    .setMinUpdateDistanceMeters(10f)
                     .build()
                 fusedLocationClient.requestLocationUpdates(locationRequest, fusedLocationCallback, Looper.getMainLooper())
             } catch (e: Exception) {
