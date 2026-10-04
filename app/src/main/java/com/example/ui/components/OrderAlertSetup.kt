@@ -299,3 +299,86 @@ private fun WarningBanner(
         }
     }
 }
+
+/** Permissions without which the app does not open at all (new orders must open full screen). */
+val AppGateRequirements = listOf(GoOnlineRequirement.OVERLAY, GoOnlineRequirement.FULL_SCREEN)
+
+/**
+ * Blocking screen shown instead of the app until "Display over other apps" and, on Android 14+,
+ * full-screen alerts are allowed. Re-checked every time the partner returns from Settings.
+ */
+@Composable
+fun AppPermissionGateScreen(missing: List<GoOnlineRequirement>) {
+    val context = LocalContext.current
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(
+                Icons.Default.NotificationsActive,
+                contentDescription = null,
+                tint = EmeraldPrimary,
+                modifier = Modifier.size(64.dp)
+            )
+            Spacer(Modifier.height(16.dp))
+            Text(
+                "Allow full-screen order alerts",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "New delivery requests open full screen, like an incoming call, even when you are " +
+                    "using another app or the phone is locked. Allow the permissions below to use the app.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Spacer(Modifier.height(24.dp))
+            AppGateRequirements.forEach { req ->
+                val granted = req !in missing
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            if (granted) Icons.Default.CheckCircle else Icons.Default.ErrorOutline,
+                            contentDescription = null,
+                            tint = if (granted) EmeraldPrimary else MaterialTheme.colorScheme.error
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(req.title, fontWeight = FontWeight.Bold)
+                            Text(req.why, style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (!granted) {
+                            Button(
+                                onClick = {
+                                    try {
+                                        context.startActivity(GoOnlinePermissions.settingsIntent(context, req))
+                                    } catch (e: Exception) {
+                                        runCatching { context.startActivity(GoOnlinePermissions.appDetailsIntent(context)) }
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
+                                modifier = Modifier.testTag("gate_allow_${req.name.lowercase()}")
+                            ) { Text("Allow") }
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            Text(
+                "In the screen that opens, find Sndmart Partner and turn the switch on, then come back.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.outline
+            )
+        }
+    }
+}

@@ -52,9 +52,10 @@ The backend hardening is split in two migrations under `supabase/migrations/`:
 - **Full screen:** `IncomingOrderActivity`, visual only. Locked / screen off: opened as the
   notification's full-screen intent. Screen on (any app, including during an active delivery):
   launched directly, which needs "Display over other apps". Not shown over an ongoing phone call.
-- **Mandatory permissions:** notifications, "Display over other apps" and, on Android 14+,
-  full-screen alerts. The partner cannot go online until all are granted; a red banner on the
-  Dashboard shows while any is missing.
+- **Mandatory permissions:** "Display over other apps" and, on Android 14+, full-screen alerts
+  are required to open the app at all: a blocking screen with **Allow** buttons is shown until
+  both are on. Notifications are also required to go online; a red banner on the Dashboard shows
+  while any required permission is missing.
 - **Which pushes ring:** a push is a new offer only when it carries a non-empty `assignment_id`
   (or `assignmentId`). Every other push is a normal notification: no full screen, no alarm.
   `order_id` is never used as an assignment id.

@@ -36,6 +36,9 @@ import com.example.ui.AuthUiState
 import com.example.ui.MainViewModel
 import com.example.ui.components.DeliveryTopAppBar
 import com.example.ui.components.MaintenanceBanner
+import com.example.ui.components.AppGateRequirements
+import com.example.ui.components.AppPermissionGateScreen
+import com.example.ui.components.rememberMissingGoOnlineRequirements
 import com.example.ui.screens.auth.AuthScreen
 import com.example.ui.screens.dashboard.DashboardScreen
 import com.example.ui.screens.delivery.ActiveDeliveryDetailScreen
@@ -233,6 +236,14 @@ fun MainAppRoot(viewModel: MainViewModel, onUpdateApp: () -> Unit = {}) {
             onUpdateNow = onUpdateApp,
             onCheckAgain = { viewModel.runStartupChecks() }
         )
+        return
+    }
+
+    // Display over other apps + full-screen alerts are mandatory: the app stays on this screen
+    // until both are allowed (re-checked whenever the partner comes back from Settings).
+    val missingGate = rememberMissingGoOnlineRequirements().filter { it in AppGateRequirements }
+    if (missingGate.isNotEmpty()) {
+        AppPermissionGateScreen(missing = missingGate)
         return
     }
 
