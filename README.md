@@ -119,7 +119,7 @@ CI (`.github/workflows/main.yml`) runs unit tests on every push and pull request
 `main` builds a signed APK + AAB. Required repository secrets: `GOOGLE_SERVICES_JSON`,
 `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_PASSWORD`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
 `GOOGLE_MAPS_API_KEY`. `versionCode` / `versionName` come from `app/build.gradle.kts`
-(first Play upload: code `1`, name `1.1.0`), overridable by the repository variables
+(currently code `2`, name `1.1.1`), overridable by the repository variables
 `VERSION_CODE` / `VERSION_NAME` or the inputs of a manual "Run workflow".
 
 ### Shipping an update and making it required
