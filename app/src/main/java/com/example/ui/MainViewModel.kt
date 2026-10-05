@@ -190,10 +190,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Keeps the UI and tracking in line with the server row: "Online" is shown only when the
      * server says so. Runs for every server read of the partner (startup, resume, polling).
      */
+    private var inactiveNoticeShown = false
+
     private fun reconcileWithServer(partner: DeliveryPartner) {
         val current = _authUiState.value as? AuthUiState.Authenticated ?: return
         if (changingOnline) return
-        if (partner.isOnline) {
+        if (!partner.isActive && !inactiveNoticeShown) {
+            inactiveNoticeShown = true
+            showMessage("Your account has been deactivated by Sndmart. Please contact your city admin.")
+        }
+        // A deactivated partner is never treated as online, whatever the row says.
+        if (partner.isOnline && partner.isActive) {
             _autoOfflineNotice.value = false
             if (!locationTracker.isTracking.value && locationTracker.hasLocationPermission()) {
                 locationTracker.startTracking()
@@ -202,9 +209,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (locationTracker.isTracking.value) locationTracker.stopTracking()
             if (prefs.onlineIntent) _autoOfflineNotice.value = true
         }
-        if (current.partner.isOnline != partner.isOnline || current.partner.isAvailable != partner.isAvailable) {
+        val online = partner.isOnline && partner.isActive
+        if (current.partner.isOnline != online || current.partner.isAvailable != partner.isAvailable ||
+            current.partner.isActive != partner.isActive
+        ) {
             _authUiState.value = AuthUiState.Authenticated(
-                current.partner.copy(isOnline = partner.isOnline, isAvailable = partner.isAvailable)
+                current.partner.copy(isOnline = online, isAvailable = partner.isAvailable, isActive = partner.isActive)
             )
         }
     }
@@ -338,7 +348,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             else -> {
                 _authUiState.value = AuthUiState.Authenticated(partner)
-                if (partner.isOnline) {
+                if (partner.isOnline && partner.isActive) {
                     if (locationTracker.hasLocationPermission()) {
                         locationTracker.startTracking()
                     } else {

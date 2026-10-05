@@ -199,7 +199,7 @@ interface SupabaseApiService {
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("delivery_partner_id") partnerIdFilter: String,
-        @Query("select") select: String = "id,delivery_partner_id,payout_method,account_holder_name,account_number,ifsc_code,bank_name,upi_id,is_verified"
+        @Query("select") select: String = "delivery_partner_id,payout_method,account_holder_name,account_number,ifsc_code,bank_name,upi_id,is_verified"
     ): Response<List<DeliveryPartnerBankDetails>>
 
     @GET("rest/v1/delivery_partner_earnings")
