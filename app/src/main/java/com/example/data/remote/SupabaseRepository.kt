@@ -1807,6 +1807,10 @@ class SupabaseRepository(
     ): List<DeliveryAssignment> {
         if (rawList.isEmpty()) return emptyList()
 
+        // The partner is paid the city's earning per order (settle_delivered_order_earnings);
+        // the order's delivery fee only applies when the city has not set one.
+        val cityEarningPerOrder = (_cashStatus.value ?: fetchCashStatus())?.earningPerOrder
+
         // Identify any assignments missing embedded orders, and batch fetch them if needed
         val missingOrderIds = rawList
             .filter { it.orders == null && it.orderId.isNotBlank() }
@@ -1907,7 +1911,7 @@ class SupabaseRepository(
                 customerAddress = customerAddressStr,
                 orderNumber = order?.orderNumber ?: assignment.orderNumber,
                 totalAmount = order?.totalAmount ?: assignment.totalAmount,
-                deliveryFee = order?.deliveryFee ?: assignment.deliveryFee,
+                deliveryFee = cityEarningPerOrder ?: order?.deliveryFee ?: assignment.deliveryFee,
                 paymentMode = order?.paymentMethod ?: assignment.paymentMode,
                 estimatedPickupDistanceKm = pickupDistKm,
                 estimatedDropDistanceKm = dropDistKm,
