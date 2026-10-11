@@ -28,6 +28,7 @@ import com.example.ui.MainViewModel
 import com.example.ui.components.*
 import com.example.ui.theme.*
 import com.example.util.isCashOnDelivery
+import com.example.util.paymentLabel
 
 @Composable
 fun DeliveriesScreen(
@@ -290,7 +291,7 @@ fun ActiveDeliveryCard(
                     shape = RoundedCornerShape(6.dp)
                 ) {
                     Text(
-                        text = "${assignment.paymentMode} • ₹${assignment.totalAmount.toInt()}",
+                        text = "${paymentLabel(assignment.paymentMode, assignment.paymentStatus)} • ₹${assignment.totalAmount.toInt()}",
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontWeight = FontWeight.Bold,
                             color = if (isCashOnDelivery(assignment.paymentMode)) AmberOnContainer else Slate700
@@ -410,7 +411,7 @@ fun DeliveredHistoryCard(
 
             Column(horizontalAlignment = Alignment.End) {
                 Text(text = "+₹${assignment.deliveryFee.toInt()}", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = EmeraldPrimary))
-                Text(text = assignment.paymentMode, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                Text(text = paymentLabel(assignment.paymentMode, assignment.paymentStatus), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
             }
         }
     }

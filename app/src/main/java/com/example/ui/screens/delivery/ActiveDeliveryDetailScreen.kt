@@ -48,6 +48,8 @@ import com.example.ui.components.*
 import com.example.ui.theme.*
 import com.example.util.ImageUtils
 import com.example.util.isCashOnDelivery
+import com.example.util.isPaidOnline
+import com.example.util.paymentLabel
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
 import java.text.SimpleDateFormat
@@ -350,7 +352,7 @@ fun ActiveDeliveryDetailScreen(
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                         )
                         Text(
-                            text = "Payout: ₹${assignment.deliveryFee.toInt()} • ${assignment.paymentMode}",
+                            text = "Payout: ₹${assignment.deliveryFee.toInt()} • ${paymentLabel(assignment.paymentMode, assignment.paymentStatus)}",
                             style = MaterialTheme.typography.bodySmall,
                             color = EmeraldPrimary
                         )
@@ -524,15 +526,20 @@ fun ActiveDeliveryDetailScreen(
                                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
                             )
                         }
+                        val paidOnline = isPaidOnline(assignment.paymentMode, assignment.paymentStatus)
                         Surface(
-                            color = if (isCashOnDelivery(assignment.paymentMode)) AmberContainer else EmeraldContainer,
+                            color = if (paidOnline) EmeraldContainer else AmberContainer,
                             shape = RoundedCornerShape(6.dp)
                         ) {
                             Text(
-                                text = if (isCashOnDelivery(assignment.paymentMode)) "COLLECT CASH: ₹${assignment.totalAmount.toInt()}" else "PREPAID ORDER",
+                                text = when {
+                                    isCashOnDelivery(assignment.paymentMode) -> "CASH ON DELIVERY\nCOLLECT ₹${assignment.totalAmount.toInt()}"
+                                    paidOnline -> "UPI PAID\nDON'T COLLECT CASH"
+                                    else -> "UPI NOT PAID YET"
+                                },
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontWeight = FontWeight.Bold,
-                                    color = if (isCashOnDelivery(assignment.paymentMode)) AmberOnContainer else EmeraldOnContainer
+                                    color = if (paidOnline) EmeraldOnContainer else AmberOnContainer
                                 ),
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                             )

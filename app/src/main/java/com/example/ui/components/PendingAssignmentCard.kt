@@ -21,6 +21,7 @@ import com.example.data.model.DeliveryAssignment
 import com.example.ui.theme.*
 import com.example.util.ServerClock
 import com.example.util.parseIsoMillis
+import com.example.util.paymentLabel
 import kotlinx.coroutines.delay
 import java.util.*
 
@@ -159,7 +160,7 @@ fun PendingAssignmentCard(
                         )
                     )
                     Text(
-                        text = "${assignment.itemCount} Items • ${assignment.paymentMode}",
+                        text = "${assignment.itemCount} Items • ${paymentLabel(assignment.paymentMode, assignment.paymentStatus)}",
                         style = MaterialTheme.typography.bodySmall.copy(
                             color = Slate700
                         )

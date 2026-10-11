@@ -1913,6 +1913,7 @@ class SupabaseRepository(
                 totalAmount = order?.totalAmount ?: assignment.totalAmount,
                 deliveryFee = cityEarningPerOrder ?: order?.deliveryFee ?: assignment.deliveryFee,
                 paymentMode = order?.paymentMethod ?: assignment.paymentMode,
+                paymentStatus = order?.paymentStatus ?: assignment.paymentStatus,
                 estimatedPickupDistanceKm = pickupDistKm,
                 estimatedDropDistanceKm = dropDistKm,
                 itemsSummary = summary,

@@ -44,6 +44,7 @@ import com.example.data.model.DeliveryPartner
 import com.example.ui.MainViewModel
 import com.example.ui.components.*
 import com.example.ui.theme.*
+import com.example.util.paymentLabel
 
 @Composable
 fun DashboardScreen(
@@ -585,7 +586,7 @@ fun ActiveAssignmentCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "${assignment.itemCount} items • ${assignment.paymentMode}",
+                    text = "${assignment.itemCount} items • ${paymentLabel(assignment.paymentMode, assignment.paymentStatus)}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.outline
                 )

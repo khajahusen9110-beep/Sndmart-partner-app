@@ -10,6 +10,18 @@ import java.util.TimeZone
 fun isCashOnDelivery(paymentMode: String?): Boolean =
     paymentMode.equals("cash", ignoreCase = true) || paymentMode.equals("cod", ignoreCase = true)
 
+/** Paid online (UPI) before delivery: the partner must not collect any cash. */
+fun isPaidOnline(paymentMode: String?, paymentStatus: String?): Boolean =
+    !isCashOnDelivery(paymentMode) && paymentStatus.equals("paid", ignoreCase = true)
+
+/** Short payment label for order cards: "Cash on Delivery", "UPI · Paid", "UPI · Not paid". */
+fun paymentLabel(paymentMode: String?, paymentStatus: String?): String = when {
+    isCashOnDelivery(paymentMode) -> "Cash on Delivery"
+    isPaidOnline(paymentMode, paymentStatus) -> "UPI · Paid"
+    paymentStatus.isNullOrBlank() -> "UPI / Online"
+    else -> "UPI · Not paid"
+}
+
 /**
  * Cash the partner currently holds: sum(collected) - sum(remitted that is pending or confirmed).
  * Rejected entries are ignored; pending remittances already count as handed over so the

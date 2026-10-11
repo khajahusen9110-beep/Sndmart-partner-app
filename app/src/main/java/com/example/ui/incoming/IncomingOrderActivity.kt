@@ -290,7 +290,7 @@ private fun IncomingOrderScreen(
                             color = if (cash) Color(0xFFFEF3C7) else Color(0xFFD1FAE5)
                         ) {
                             Text(
-                                text = if (cash) "COLLECT CASH ₹${alert.totalAmount}" else "PREPAID • ₹${alert.totalAmount}",
+                                text = if (cash) "COLLECT CASH ₹${alert.totalAmount}" else "UPI PAID • ₹${alert.totalAmount}",
                                 fontWeight = FontWeight.Bold,
                                 color = if (cash) Color(0xFF92400E) else Color(0xFF065F46),
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)

@@ -123,6 +123,7 @@ data class DeliveryAssignment(
     val itemCount: Int = 1,
     val totalAmount: Double = 0.0,
     val paymentMode: String = "PREPAID", // COD or PREPAID
+    val paymentStatus: String = "", // orders.payment_status: paid, pending, cod
     val deliveryFee: Double = 45.0,
     val estimatedPickupDistanceKm: Double = 1.2,
     val estimatedDropDistanceKm: Double = 3.5,
@@ -155,6 +156,7 @@ data class OrderDbModel(
     @Json(name = "total_amount") val totalAmount: Double? = null,
     @Json(name = "delivery_fee") val deliveryFee: Double? = null,
     @Json(name = "payment_method") val paymentMethod: String? = null,
+    @Json(name = "payment_status") val paymentStatus: String? = null,
     val vendors: VendorDbModel? = null,
     @Json(name = "customer_addresses") val customerAddresses: CustomerAddressDbModel? = null,
     val cities: CityDbModel? = null,
