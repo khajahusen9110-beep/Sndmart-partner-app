@@ -62,6 +62,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val incomingAssignmentAlert = repository.incomingAssignmentAlert
     val earnings = repository.earnings
     val cashLedger = repository.cashLedger
+
+    /** COD cash status from the server; [CashStatus.mustSettle] locks the app on the settlement screen. */
+    val cashStatus = repository.cashStatus
     val paymentRequests = repository.paymentRequests
     val bankDetails = repository.bankDetails
     val notifications = repository.notifications
@@ -200,7 +203,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         } else {
             if (locationTracker.isTracking.value) locationTracker.stopTracking()
-            if (prefs.onlineIntent) _autoOfflineNotice.value = true
+            if (prefs.onlineIntent && repository.cashStatus.value?.blocked != true) _autoOfflineNotice.value = true
         }
         if (current.partner.isOnline != partner.isOnline || current.partner.isAvailable != partner.isAvailable) {
             _authUiState.value = AuthUiState.Authenticated(
@@ -237,6 +240,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         loadCities()
         viewModelScope.launch {
             repository.currentPartner.filterNotNull().collect { reconcileWithServer(it) }
+        }
+        viewModelScope.launch {
+            // Set offline for the cash limit, not for stale location: no "Go online" notice.
+            repository.cashStatus.filterNotNull().collect { status ->
+                if (status.blocked) {
+                    prefs.onlineIntent = false
+                    _autoOfflineNotice.value = false
+                }
+            }
+        }
+    }
+
+    fun refreshCashStatus() {
+        viewModelScope.launch { repository.fetchCashStatus() }
+    }
+
+    fun submitCashSettlement(utr: String, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            _isActionLoading.value = true
+            val res = repository.submitCashSettlement(utr)
+            _isActionLoading.value = false
+            res.onSuccess {
+                showMessage("Settlement submitted. The app opens once your city admin verifies it.")
+            }.onFailure {
+                showMessage(it.message ?: "Could not submit settlement")
+            }
+            onDone(res.isSuccess)
         }
     }
 

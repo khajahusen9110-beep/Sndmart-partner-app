@@ -239,6 +239,41 @@ data class CashLedgerEntry(
     val orders: CashLedgerOrderModel? = null
 )
 
+/** Latest cash settlement (UPI payment of cash in hand) the partner submitted. */
+@JsonClass(generateAdapter = true)
+data class CashSettlementInfo(
+    val id: String? = null,
+    val amount: Double = 0.0,
+    val status: String = "", // "pending" | "confirmed" | "rejected"
+    val utr: String? = null,
+    val note: String? = null,
+    @Json(name = "created_at") val createdAt: String? = null,
+    @Json(name = "confirmed_at") val confirmedAt: String? = null
+)
+
+/**
+ * Server view of the partner's COD cash (rpc delivery_partner_get_cash_status). Cash in hand
+ * counts only settlements the city admin has verified; at [cashLimit] the partner is blocked.
+ */
+@JsonClass(generateAdapter = true)
+data class CashStatus(
+    @Json(name = "cash_in_hand") val cashInHand: Double = 0.0,
+    @Json(name = "pending_settlement") val pendingSettlement: Double = 0.0,
+    @Json(name = "cash_limit") val cashLimit: Double? = null,
+    val blocked: Boolean = false,
+    @Json(name = "has_active_delivery") val hasActiveDelivery: Boolean = false,
+    @Json(name = "settlement_upi_id") val settlementUpiId: String? = null,
+    @Json(name = "settlement_upi_name") val settlementUpiName: String? = null,
+    @Json(name = "earning_per_order") val earningPerOrder: Double? = null,
+    @Json(name = "last_settlement") val lastSettlement: CashSettlementInfo? = null
+) {
+    /** The app is locked on the settlement screen (deliveries already accepted come first). */
+    val mustSettle: Boolean get() = blocked && !hasActiveDelivery
+
+    /** A settlement was submitted and waits for the city admin. */
+    val awaitingVerification: Boolean get() = pendingSettlement > 0.0
+}
+
 @JsonClass(generateAdapter = true)
 data class DeliveryPartnerBankDetails(
     val id: String? = null,

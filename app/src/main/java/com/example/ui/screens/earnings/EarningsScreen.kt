@@ -49,6 +49,8 @@ fun EarningsScreen(
 
     var showPayoutDialog by remember { mutableStateOf(false) }
     var showRemittanceDialog by remember { mutableStateOf(false) }
+    val cashStatus by viewModel.cashStatus.collectAsState()
+    val isActionLoading by viewModel.isActionLoading.collectAsState()
 
     Column(
         modifier = Modifier
@@ -223,7 +225,10 @@ fun EarningsScreen(
                                 )
                                 Spacer(modifier = Modifier.height(14.dp))
                                 Button(
-                                    onClick = { showRemittanceDialog = true },
+                                    onClick = {
+                                        viewModel.refreshCashStatus()
+                                        showRemittanceDialog = true
+                                    },
                                     enabled = cashInHand > 0.0,
                                     shape = RoundedCornerShape(12.dp),
                                     colors = ButtonDefaults.buttonColors(
@@ -319,7 +324,34 @@ fun EarningsScreen(
         )
     }
 
-    if (showRemittanceDialog) {
+    val settlement = cashStatus
+    if (showRemittanceDialog && settlement?.settlementUpiId != null) {
+        // City has a settlement UPI ID: pay the whole cash in hand by UPI.
+        AlertDialog(
+            onDismissRequest = { showRemittanceDialog = false },
+            title = { Text("Settle cash by UPI") },
+            text = {
+                Box(Modifier.heightIn(max = 520.dp)) {
+                    LazyColumn {
+                        item {
+                            CashSettlementPanel(
+                                status = settlement,
+                                isLoading = isActionLoading,
+                                onSubmit = { utr, done ->
+                                    viewModel.submitCashSettlement(utr) { ok ->
+                                        done(ok)
+                                        if (ok) showRemittanceDialog = false
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { showRemittanceDialog = false }) { Text("Close") } }
+        )
+    } else if (showRemittanceDialog) {
         CashRemittanceDialog(
             currentCashBalance = cashInHand,
             onDismiss = { showRemittanceDialog = false },

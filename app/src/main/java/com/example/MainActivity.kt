@@ -37,6 +37,7 @@ import com.example.ui.MainViewModel
 import com.example.ui.components.DeliveryTopAppBar
 import com.example.ui.components.MaintenanceBanner
 import com.example.ui.components.AppGateRequirements
+import com.example.ui.components.CashSettlementScreen
 import com.example.ui.components.AppPermissionGateScreen
 import com.example.ui.components.rememberMissingGoOnlineRequirements
 import com.example.ui.screens.auth.AuthScreen
@@ -254,6 +255,24 @@ fun MainAppRoot(viewModel: MainViewModel, onUpdateApp: () -> Unit = {}) {
     val missingGate = rememberMissingGoOnlineRequirements().filter { it in AppGateRequirements }
     if (missingGate.isNotEmpty()) {
         AppPermissionGateScreen(missing = missingGate)
+        return
+    }
+
+    // COD cash at the city limit: only the settlement screen until the city admin verifies it.
+    val cashStatus by viewModel.cashStatus.collectAsState()
+    val isActionLoading by viewModel.isActionLoading.collectAsState()
+    val settleStatus = cashStatus?.takeIf { it.mustSettle && authState is AuthUiState.Authenticated }
+    if (settleStatus != null) {
+        Box(Modifier.fillMaxSize()) {
+            CashSettlementScreen(
+                status = settleStatus,
+                isLoading = isActionLoading,
+                onRefresh = { viewModel.refreshCashStatus() },
+                onSubmit = { utr, done -> viewModel.submitCashSettlement(utr, done) },
+                onSignOut = { viewModel.signOut() }
+            )
+            SnackbarHost(snackbarHostState, Modifier.align(androidx.compose.ui.Alignment.BottomCenter))
+        }
         return
     }
 

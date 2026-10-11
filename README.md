@@ -61,6 +61,23 @@ The backend hardening is split in two migrations under `supabase/migrations/`:
   (or `assignmentId`). Every other push is a normal notification: no full screen, no alarm.
   `order_id` is never used as an assignment id.
 
+## Earnings and COD cash settlement
+
+Set per city by the city admin (`city_delivery_settings`, migration
+`20261011000000_partner_earning_and_cash_settlement.sql`):
+
+- `partner_earning_per_order`: credited to the partner's wallet (`delivery_partner_earnings`)
+  when an order is delivered. Empty = the order's delivery fee, as before.
+- `partner_cash_limit`: COD cash in hand at which the partner is blocked. Empty = no limit.
+- `settlement_upi_id` / `settlement_upi_name`: where partners pay their cash in hand.
+
+Cash in hand = collected COD minus settlements the city admin has **verified**. At the limit
+the server sets the partner offline and refuses going online or accepting offers; a delivery
+already accepted can still be completed. The app then shows only the settlement screen: pay
+the whole amount by UPI (`upi://pay` with the amount filled in), enter the UTR, and
+`delivery_partner_submit_cash_settlement` records it as pending. The city admin verifies it
+(`city_admin_confirm_cash_remittance`) and the app opens again (re-checked every 30 s).
+
 ## Staying online (location freshness)
 
 The server offers orders only to partners whose location is fresh, and sets a partner offline
@@ -119,7 +136,7 @@ CI (`.github/workflows/main.yml`) runs unit tests on every push and pull request
 `main` builds a signed APK + AAB. Required repository secrets: `GOOGLE_SERVICES_JSON`,
 `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_PASSWORD`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
 `GOOGLE_MAPS_API_KEY`. `versionCode` / `versionName` come from `app/build.gradle.kts`
-(currently code `2`, name `1.1.1`), overridable by the repository variables
+(currently code `3`, name `1.2.0`), overridable by the repository variables
 `VERSION_CODE` / `VERSION_NAME` or the inputs of a manual "Run workflow".
 
 ### Shipping an update and making it required

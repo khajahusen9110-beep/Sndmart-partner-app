@@ -77,6 +77,7 @@ fun DashboardScreen(
     var showSetup by remember { mutableStateOf(false) }
     val locationProblem by viewModel.locationNotUpdating.collectAsState()
     val autoOfflineNotice by viewModel.autoOfflineNotice.collectAsState()
+    val cashStatus by viewModel.cashStatus.collectAsState()
 
     fun openSettings(intent: Intent, fallback: Intent? = null) {
         try {
@@ -181,6 +182,10 @@ fun DashboardScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        cashStatus?.takeIf { it.blocked }?.let { status ->
+            item { CashLimitBanner(status) }
+        }
+
         if (autoOfflineNotice && !isOnline) {
             item {
                 AutoOfflineBanner(

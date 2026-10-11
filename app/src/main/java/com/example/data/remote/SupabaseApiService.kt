@@ -367,6 +367,22 @@ interface SupabaseApiService {
         @Body params: Map<String, @JvmSuppressWildcards Any?>
     ): Response<ResponseBody>
 
+    /** COD cash in hand, the city's cash limit and settlement UPI (see CashStatus). */
+    @POST("rest/v1/rpc/delivery_partner_get_cash_status")
+    suspend fun rpcGetCashStatus(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Body params: Map<String, String> = emptyMap()
+    ): Response<CashStatus>
+
+    /** Records a UPI payment of the whole cash in hand; pending until the city admin verifies. */
+    @POST("rest/v1/rpc/delivery_partner_submit_cash_settlement")
+    suspend fun rpcSubmitCashSettlement(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Body params: Map<String, String>
+    ): Response<ResponseBody>
+
     // Storage Upload
     @POST("storage/v1/object/{bucket}/{folder}/{fileName}")
     suspend fun uploadStorageObject(

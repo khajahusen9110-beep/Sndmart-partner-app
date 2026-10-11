@@ -224,6 +224,9 @@ class SupabaseRepository(
     private val _cashLedger = MutableStateFlow<List<CashLedgerEntry>>(emptyList())
     val cashLedger: StateFlow<List<CashLedgerEntry>> = _cashLedger.asStateFlow()
 
+    private val _cashStatus = MutableStateFlow<CashStatus?>(null)
+    val cashStatus: StateFlow<CashStatus?> = _cashStatus.asStateFlow()
+
     private val _paymentRequests = MutableStateFlow<List<PaymentRequest>>(emptyList())
     val paymentRequests: StateFlow<List<PaymentRequest>> = _paymentRequests.asStateFlow()
 
@@ -1403,6 +1406,7 @@ class SupabaseRepository(
             coroutineScope.launch {
                 fetchEarnings()
                 fetchCashLedger()
+                fetchCashStatus()
                 fetchAssignments()
             }
             Result.success(true)
@@ -1426,6 +1430,48 @@ class SupabaseRepository(
             addNotification(
                 "Remittance Request Submitted",
                 "Cash remittance of ₹${amount.toInt()} requested. Awaiting hub manager confirmation.",
+                "cash"
+            )
+            Result.success(true)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /** Reads the server's cash status; keeps the last value when offline or on error. */
+    suspend fun fetchCashStatus(): CashStatus? = withContext(Dispatchers.IO) {
+        if (prefs.token == null) return@withContext _cashStatus.value
+        try {
+            val response = apiService.rpcGetCashStatus(apiKey = prefs.customSupabaseKey, bearerToken = bearer())
+            val body = response.body()
+            if (response.isSuccessful && body != null) _cashStatus.value = body
+            else Log.w("SupabaseRepo", errorMessage(response, "Cash status unavailable"))
+        } catch (e: Exception) {
+            Log.w("SupabaseRepo", "Cash status fetch failed: ${e.message}")
+        }
+        _cashStatus.value
+    }
+
+    /** Submits the UPI transaction ID for the whole cash in hand (server decides the amount). */
+    suspend fun submitCashSettlement(utr: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        try {
+            val cleaned = utr.filterNot { it.isWhitespace() }.uppercase()
+            if (cleaned.length < 6) {
+                return@withContext Result.failure(Exception("Enter the UPI transaction ID (UTR) shown in your payment app"))
+            }
+            val response = apiService.rpcSubmitCashSettlement(
+                apiKey = prefs.customSupabaseKey,
+                bearerToken = bearer(),
+                params = mapOf("p_utr" to cleaned)
+            )
+            if (!response.isSuccessful) {
+                return@withContext Result.failure(Exception(errorMessage(response, "Could not submit settlement")))
+            }
+            fetchCashStatus()
+            fetchCashLedger()
+            addNotification(
+                "Settlement Submitted",
+                "Your cash settlement (UTR $cleaned) is waiting for city admin verification.",
                 "cash"
             )
             Result.success(true)
@@ -2169,7 +2215,9 @@ class SupabaseRepository(
                 val notifsDeferred = async { fetchNotifications() }
                 val reviewsDeferred = async { fetchReviews() }
                 val bankDeferred = async { fetchBankDetails() }
+                val cashStatusDeferred = async { fetchCashStatus() }
                 awaitAll(
+                    cashStatusDeferred,
                     assignmentsDeferred,
                     earningsDeferred,
                     ledgerDeferred,
@@ -2197,6 +2245,7 @@ class SupabaseRepository(
         _incomingAssignmentAlert.value = null
         _earnings.value = emptyList()
         _cashLedger.value = emptyList()
+        _cashStatus.value = null
         _paymentRequests.value = emptyList()
         _bankDetails.value = null
         _notifications.value = emptyList()
