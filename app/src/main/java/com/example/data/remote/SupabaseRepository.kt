@@ -1338,9 +1338,25 @@ class SupabaseRepository(
                 return@withContext Result.failure(Exception(msg))
             }
 
+            // The returned row carries the delivery deadline the server restarts at pickup.
+            val row = try {
+                response.body()?.string()?.let { body ->
+                    if (body.trimStart().startsWith("[")) org.json.JSONArray(body).optJSONObject(0) else JSONObject(body)
+                }
+            } catch (e: Exception) {
+                null
+            }
+            fun JSONObject.text(key: String): String? = optString(key, "").takeIf { it.isNotBlank() && it != "null" }
             localStages.remove(assignmentId)
             updateLocalAssignment(assignmentId) {
-                it.copy(status = "picked_up", pickedUpAt = currentIsoTimestamp(), pickupPhotoUrl = pickupPhotoUrl)
+                it.copy(
+                    status = "picked_up",
+                    pickedUpAt = row?.text("picked_up_at") ?: currentIsoTimestamp(),
+                    pickupPhotoUrl = pickupPhotoUrl,
+                    estimatedDeliveryAt = row?.text("estimated_delivery_at") ?: it.estimatedDeliveryAt,
+                    estimatedDeliveryMinutes = row?.text("estimated_delivery_minutes")?.toDoubleOrNull()?.toInt()
+                        ?: it.estimatedDeliveryMinutes
+                )
             }
             addNotification("Items Picked Up", "Items marked as picked up. Ready to start delivery to customer.", "order")
             Result.success(true)

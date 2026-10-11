@@ -380,6 +380,9 @@ fun ActiveDeliveryDetailScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // Countdown from pickup (server-set deadline)
+            DeliveryTimerCard(assignment)
+
             // Google Maps Live Delivery Route with 3 Markers & Directions Route
             ActiveDeliveryMapView(
                 assignment = assignment,
