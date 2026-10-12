@@ -9,6 +9,7 @@ import com.example.MainActivity
 import com.example.R
 import com.example.data.local.AppPreferences
 import com.example.data.remote.SupabaseRepository
+import com.example.util.NotificationVisuals
 import com.example.util.newOfferAssignmentId
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
@@ -31,7 +32,7 @@ open class DeliveryPartnerFcmService : FirebaseMessagingService() {
         val repo = SupabaseRepository.getInstance(applicationContext)
 
         if (assignmentId.isBlank()) {
-            showInfoNotification(title, body)
+            showInfoNotification(title, body, data["image_url"])
             repo.addNotification(title, body, "info")
             return
         }
@@ -71,7 +72,7 @@ open class DeliveryPartnerFcmService : FirebaseMessagingService() {
         }
     }
 
-    private fun showInfoNotification(title: String, body: String) {
+    private fun showInfoNotification(title: String, body: String, imageUrl: String?) {
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
@@ -79,15 +80,15 @@ open class DeliveryPartnerFcmService : FirebaseMessagingService() {
         val pendingIntent = PendingIntent.getActivity(
             this, notifyId, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val notification = NotificationCompat.Builder(this, SndmartFirebaseMessagingService.CHANNEL_DELIVERY_UPDATES)
+        val builder = NotificationCompat.Builder(this, SndmartFirebaseMessagingService.CHANNEL_DELIVERY_UPDATES)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(body)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
-            .build()
+        NotificationVisuals.apply(this, builder, body, imageUrl)
+        val notification = builder.build()
         try {
             getSystemService(NotificationManager::class.java).notify(notifyId, notification)
         } catch (e: SecurityException) {
