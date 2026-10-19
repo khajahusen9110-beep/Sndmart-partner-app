@@ -56,7 +56,10 @@ enum class GoOnlineRequirement(val title: String, val why: String, val required:
     FULL_SCREEN(
         "Full-screen alerts",
         "Opens a new order full screen on the lock screen.",
-        required = true
+        // Strongly recommended, but not a hard blocker: on some phones (e.g. MIUI) this permission
+        // can't be reliably detected as granted, so blocking the app/going-online would trap the
+        // partner. A dashboard banner keeps nudging them to enable it.
+        required = false
     ),
     BATTERY(
         "Battery: Don't optimize",
@@ -292,8 +295,12 @@ private fun WarningBanner(
     }
 }
 
-/** Permissions without which the app does not open at all (new orders must open full screen). */
-val AppGateRequirements = listOf(GoOnlineRequirement.FULL_SCREEN)
+/**
+ * Permissions without which the app does not open at all. Full-screen alerts are no longer a hard
+ * app gate — they can't be reliably detected on some phones (MIUI), so gating would trap the
+ * partner on a screen forever. Full-screen is now nudged via the dashboard banner instead.
+ */
+val AppGateRequirements = emptyList<GoOnlineRequirement>()
 
 /**
  * Blocking screen shown instead of the app until full-screen alerts (Android 14+) are allowed. Re-checked every time the partner returns from Settings.

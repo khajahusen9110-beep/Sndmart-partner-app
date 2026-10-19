@@ -74,6 +74,11 @@ fun DashboardScreen(
     // location and battery are recommended and asked once per session.
     val missingRequirements = rememberMissingGoOnlineRequirements()
     val missingRequired = missingRequirements.filter { it.required }
+    // Full-screen alerts are recommended (not a hard blocker) but important, so keep nudging for
+    // them in the banner alongside any missing required permissions.
+    val missingAlertNudge = missingRequirements.filter {
+        it.required || it == GoOnlineRequirement.FULL_SCREEN
+    }
     var askedRecommended by rememberSaveable { mutableStateOf(setOf<String>()) }
     var showSetup by remember { mutableStateOf(false) }
     val locationProblem by viewModel.locationNotUpdating.collectAsState()
@@ -215,10 +220,10 @@ fun DashboardScreen(
             }
         }
 
-        if (missingRequired.isNotEmpty()) {
+        if (missingAlertNudge.isNotEmpty()) {
             item {
                 OrderAlertSetupBanner(
-                    missingCount = missingRequired.size,
+                    missingCount = missingAlertNudge.size,
                     onFix = { showSetup = true }
                 )
             }
