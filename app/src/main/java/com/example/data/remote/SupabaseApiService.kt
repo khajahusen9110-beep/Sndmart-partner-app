@@ -383,6 +383,17 @@ interface SupabaseApiService {
         @Body params: Map<String, String>
     ): Response<ResponseBody>
 
+    /**
+     * Door-step UPI QR for collecting a COD order online.
+     * body: {"order_id": "...", "action": "create" | "check"} (default "create").
+     */
+    @POST("functions/v1/partner-order-qr")
+    suspend fun partnerOrderQr(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Body params: Map<String, String>
+    ): Response<OrderQrResponse>
+
     // Storage Upload
     @POST("storage/v1/object/{bucket}/{folder}/{fileName}")
     suspend fun uploadStorageObject(

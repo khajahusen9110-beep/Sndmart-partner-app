@@ -846,6 +846,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return repository.fetchOrderItems(orderId)
     }
 
+    /** Creates a door-step UPI QR so the customer can pay a COD order online. */
+    suspend fun createOrderQr(orderId: String): Result<OrderQrResponse> =
+        repository.createOrderQr(orderId)
+
+    /** Polls whether the order's QR payment has arrived. */
+    suspend fun checkOrderQrPaid(orderId: String): Result<Boolean> =
+        repository.checkOrderQrPaid(orderId)
+
     suspend fun uploadPickupPhoto(
         assignmentId: String,
         imageBytes: ByteArray

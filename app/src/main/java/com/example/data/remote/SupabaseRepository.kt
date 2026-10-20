@@ -1496,6 +1496,53 @@ class SupabaseRepository(
         }
     }
 
+    /**
+     * Creates (or re-fetches) a door-step UPI QR for collecting a COD order online.
+     * The amount is decided by the server from the order; money goes to the Sndmart account.
+     */
+    suspend fun createOrderQr(orderId: String): Result<OrderQrResponse> = withContext(Dispatchers.IO) {
+        try {
+            ensureValidSession()
+            val response = apiService.partnerOrderQr(
+                apiKey = prefs.customSupabaseKey,
+                bearerToken = bearer(),
+                params = mapOf("order_id" to orderId, "action" to "create")
+            )
+            val body = response.body()
+            if (response.isSuccessful && body?.imageUrl != null) {
+                Result.success(body)
+            } else {
+                Result.failure(Exception(errorMessage(response, "Could not create the payment QR")))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /** Asks the server whether the order's QR has been paid (also marks it paid if Razorpay confirms). */
+    suspend fun checkOrderQrPaid(orderId: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        try {
+            ensureValidSession()
+            val response = apiService.partnerOrderQr(
+                apiKey = prefs.customSupabaseKey,
+                bearerToken = bearer(),
+                params = mapOf("order_id" to orderId, "action" to "check")
+            )
+            val body = response.body()
+            if (response.isSuccessful && body != null) {
+                if (body.isPaid) {
+                    // Order is now online-paid: refresh so the "collect cash" step disappears.
+                    coroutineScope.launch { fetchAssignments() }
+                }
+                Result.success(body.isPaid)
+            } else {
+                Result.failure(Exception(errorMessage(response, "Could not check payment")))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     suspend fun fetchCities(forceRefresh: Boolean = false): List<City> = withContext(Dispatchers.IO) {
         if (!forceRefresh && !cachedCities.isNullOrEmpty()) {
             return@withContext cachedCities!!

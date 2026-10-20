@@ -39,9 +39,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import coil.compose.AsyncImage
 import com.example.BuildConfig
 import com.example.data.model.DeliveryAssignment
 import com.example.data.model.OrderItem
+import com.example.data.model.OrderQrResponse
 import com.example.data.model.UploadState
 import com.example.ui.MainViewModel
 import com.example.ui.components.*
@@ -50,6 +52,7 @@ import com.example.util.ImageUtils
 import com.example.util.isCashOnDelivery
 import com.example.util.isPaidOnline
 import com.example.util.paymentLabel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
 import java.text.SimpleDateFormat
@@ -97,6 +100,7 @@ fun ActiveDeliveryDetailScreen(
     var showDropPhotoOptionsDialog by remember { mutableStateOf(false) }
 
     var showCodCashDialog by remember { mutableStateOf(false) }
+    var showQrDialog by remember { mutableStateOf(false) }
     val isActionLoading by viewModel.isActionLoading.collectAsState()
     val currentLocation by viewModel.currentLocation.collectAsState()
 
@@ -676,6 +680,53 @@ fun ActiveDeliveryDetailScreen(
                 }
             }
 
+            // Collect a COD order online: show a UPI QR. Money goes to the Sndmart account,
+            // not the partner's phone, and the order becomes "paid online" (no cash to hand over).
+            val alreadyPaid = assignment.paymentStatus.equals("paid", ignoreCase = true)
+            if (isCashOnDelivery(assignment.paymentMode) && !alreadyPaid &&
+                currentStatus !in listOf("delivered", "cancelled", "rejected")
+            ) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = TealContainer.copy(alpha = 0.3f))
+                ) {
+                    Column(modifier = Modifier.padding(18.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.QrCode2, contentDescription = null, tint = TealSecondary)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Customer online pay karega?",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "UPI QR dikhao — paisa seedha Sndmart account me jaayega, aapke paas cash nahi aayega. Pay hote hi apne aap verify ho jaayega.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Button(
+                            onClick = { showQrDialog = true },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp)
+                                .testTag("collect_online_qr_button"),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = TealSecondary)
+                        ) {
+                            Icon(Icons.Default.QrCode2, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                "Show UPI QR • ₹${assignment.totalAmount.toInt()}",
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+
             // Dynamic Action Steps according to Status
             when (currentStatus) {
                 "assigned", "accepted" -> {
@@ -1230,6 +1281,14 @@ fun ActiveDeliveryDetailScreen(
         )
     }
 
+    if (showQrDialog) {
+        CollectByQrDialog(
+            assignment = assignment,
+            viewModel = viewModel,
+            onDismiss = { showQrDialog = false }
+        )
+    }
+
     if (showPickupPhotoOptionsDialog) {
         AlertDialog(
             onDismissRequest = { showPickupPhotoOptionsDialog = false },
@@ -1357,6 +1416,177 @@ fun ActiveDeliveryDetailScreen(
             }
         )
     }
+}
+
+/**
+ * Door-step "scan to pay": shows a Razorpay UPI QR for the order's amount and polls the server
+ * until the payment arrives (the razorpay-webhook confirms it automatically; this also re-checks
+ * on demand). Once paid, the order becomes online-paid so no cash is collected.
+ */
+@Composable
+private fun CollectByQrDialog(
+    assignment: DeliveryAssignment,
+    viewModel: MainViewModel,
+    onDismiss: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val orderId = assignment.orderId.ifBlank { assignment.orders?.id.orEmpty() }
+    val amount = assignment.totalAmount.toInt()
+
+    var loading by remember { mutableStateOf(true) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var qr by remember { mutableStateOf<OrderQrResponse?>(null) }
+    var paid by remember { mutableStateOf(false) }
+    var checking by remember { mutableStateOf(false) }
+    var attempt by remember { mutableStateOf(0) }
+
+    // Create (or re-fetch) the QR; re-runs when the user taps Retry.
+    LaunchedEffect(orderId, attempt) {
+        if (orderId.isBlank()) {
+            error = "Order not found."
+            loading = false
+            return@LaunchedEffect
+        }
+        loading = true
+        error = null
+        viewModel.createOrderQr(orderId)
+            .onSuccess {
+                qr = it
+                if (it.isPaid) paid = true
+            }
+            .onFailure { error = it.message ?: "Could not create the payment QR." }
+        loading = false
+    }
+
+    // Auto-poll for the payment every few seconds while the QR is on screen.
+    LaunchedEffect(qr?.qrId, paid) {
+        if (qr?.qrId == null || paid) return@LaunchedEffect
+        while (!paid) {
+            delay(4000)
+            val ok = viewModel.checkOrderQrPaid(orderId).getOrDefault(false)
+            if (ok) {
+                paid = true
+                break
+            }
+        }
+    }
+
+    // Close shortly after the payment is confirmed.
+    LaunchedEffect(paid) {
+        if (paid) {
+            delay(1800)
+            onDismiss()
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (!paid) onDismiss() },
+        icon = {
+            Icon(
+                imageVector = if (paid) Icons.Default.CheckCircle else Icons.Default.QrCode2,
+                contentDescription = null,
+                tint = if (paid) EmeraldPrimary else TealSecondary,
+                modifier = Modifier.size(36.dp)
+            )
+        },
+        title = {
+            Text(
+                text = if (paid) "Payment received ✓" else "Scan to pay ₹$amount",
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                when {
+                    paid -> Text(
+                        "₹$amount online receive ho gaya. Ab cash collect karne ki zaroorat nahi — normal tarike se OTP + photo se delivery complete karo.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = TextAlign.Center
+                    )
+
+                    loading -> {
+                        CircularProgressIndicator(color = TealSecondary)
+                        Spacer(Modifier.height(12.dp))
+                        Text("Generating QR...", style = MaterialTheme.typography.bodySmall)
+                    }
+
+                    error != null -> Text(
+                        error ?: "Something went wrong.",
+                        color = MaterialTheme.colorScheme.error,
+                        textAlign = TextAlign.Center
+                    )
+
+                    qr?.imageUrl != null -> {
+                        Text(
+                            "Customer kisi bhi UPI app (GPay / PhonePe / Paytm) se ye QR scan kare.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        AsyncImage(
+                            model = qr?.imageUrl,
+                            contentDescription = "UPI payment QR",
+                            modifier = Modifier
+                                .size(230.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.White)
+                                .padding(8.dp)
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = TealSecondary
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "Payment ka intezaar... (apne aap verify hoga)",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            when {
+                paid -> Button(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
+                ) { Text("Done") }
+
+                error != null -> Button(
+                    onClick = { attempt++ },
+                    colors = ButtonDefaults.buttonColors(containerColor = TealSecondary)
+                ) { Text("Retry") }
+
+                qr?.imageUrl != null -> Button(
+                    onClick = {
+                        if (!checking) {
+                            checking = true
+                            scope.launch {
+                                val ok = viewModel.checkOrderQrPaid(orderId).getOrDefault(false)
+                                if (ok) paid = true
+                                checking = false
+                            }
+                        }
+                    },
+                    enabled = !checking,
+                    colors = ButtonDefaults.buttonColors(containerColor = TealSecondary)
+                ) { Text(if (checking) "Checking..." else "Check now") }
+
+                else -> {}
+            }
+        },
+        dismissButton = {
+            if (!paid) TextButton(onClick = onDismiss) { Text("Close") }
+        }
+    )
 }
 
 private fun createFallbackProofBytes(tag: String, orderNum: String): ByteArray {

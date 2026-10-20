@@ -276,6 +276,24 @@ data class CashStatus(
     val awaitingVerification: Boolean get() = pendingSettlement > 0.0
 }
 
+/**
+ * Response of the partner-order-qr edge function: a door-step UPI QR for collecting a
+ * cash-on-delivery order online (money goes to the Sndmart account, not the partner).
+ * [action "check"] returns only paymentStatus/changed.
+ */
+@JsonClass(generateAdapter = true)
+data class OrderQrResponse(
+    @Json(name = "qr_id") val qrId: String? = null,
+    @Json(name = "image_url") val imageUrl: String? = null,
+    val amount: Long = 0,
+    @Json(name = "order_number") val orderNumber: String? = null,
+    @Json(name = "payment_status") val paymentStatus: String? = null,
+    val changed: Boolean = false,
+    val error: String? = null
+) {
+    val isPaid: Boolean get() = paymentStatus.equals("paid", ignoreCase = true)
+}
+
 @JsonClass(generateAdapter = true)
 data class DeliveryPartnerBankDetails(
     val id: String? = null,
