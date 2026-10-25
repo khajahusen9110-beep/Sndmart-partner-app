@@ -493,6 +493,15 @@ fun ActiveDeliveryDetailScreen(
                                 Column {
                                     Text(text = "2. Drop: ${assignment.customerName}", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
                                     Text(text = assignment.customerAddress, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    val deliveryInstr = assignment.orders?.deliveryInstructions?.takeIf { it.isNotBlank() }
+                                    if (deliveryInstr != null) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = "📝 $deliveryInstr",
+                                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                                            color = AmberAccent
+                                        )
+                                    }
                                 }
                             }
                             PhoneCallButton(phoneNumber = assignment.customerPhone)

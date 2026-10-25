@@ -157,6 +157,7 @@ data class OrderDbModel(
     @Json(name = "delivery_fee") val deliveryFee: Double? = null,
     @Json(name = "payment_method") val paymentMethod: String? = null,
     @Json(name = "payment_status") val paymentStatus: String? = null,
+    @Json(name = "delivery_instructions") val deliveryInstructions: String? = null,
     val vendors: VendorDbModel? = null,
     @Json(name = "customer_addresses") val customerAddresses: CustomerAddressDbModel? = null,
     val cities: CityDbModel? = null,

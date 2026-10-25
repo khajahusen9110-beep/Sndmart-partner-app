@@ -124,7 +124,7 @@ interface SupabaseApiService {
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("delivery_partner_id") partnerIdFilter: String,
-        @Query("select") select: String = "id,order_id,delivery_partner_id,status,assigned_at,accepted_at,picked_up_at,delivered_at,pickup_photo_url,delivered_photo_url,expires_at,batch_id,estimated_delivery_minutes,estimated_delivery_at,orders(id,order_number,total_amount,delivery_fee,payment_method,payment_status,vendor_id,address_id,city_id,vendors(id,name,latitude,longitude,address,phone),customer_addresses(id,lat,lng,recipient_name,phone,address_line,landmark))",
+        @Query("select") select: String = "id,order_id,delivery_partner_id,status,assigned_at,accepted_at,picked_up_at,delivered_at,pickup_photo_url,delivered_photo_url,expires_at,batch_id,estimated_delivery_minutes,estimated_delivery_at,orders(id,order_number,total_amount,delivery_fee,payment_method,payment_status,delivery_instructions,vendor_id,address_id,city_id,vendors(id,name,latitude,longitude,address,phone),customer_addresses(id,lat,lng,recipient_name,phone,address_line,landmark))",
         @Query("order") order: String = "created_at.desc",
         @Query("limit") limit: Int = 20,
         @Query("offset") offset: Int = 0
@@ -135,7 +135,7 @@ interface SupabaseApiService {
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("id") idFilter: String,
-        @Query("select") select: String = "id,order_number,vendor_id,address_id,city_id,total_amount,delivery_fee,payment_method,payment_status,vendors(id,name,latitude,longitude,address,phone),customer_addresses(id,lat,lng,recipient_name,phone,address_line,landmark,city,pincode),cities(id,name,center_lat,center_lng)"
+        @Query("select") select: String = "id,order_number,vendor_id,address_id,city_id,total_amount,delivery_fee,payment_method,payment_status,delivery_instructions,vendors(id,name,latitude,longitude,address,phone),customer_addresses(id,lat,lng,recipient_name,phone,address_line,landmark,city,pincode),cities(id,name,center_lat,center_lng)"
     ): Response<List<OrderDbModel>>
 
     @GET("rest/v1/orders")
@@ -143,7 +143,7 @@ interface SupabaseApiService {
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("id") inFilter: String,
-        @Query("select") select: String = "id,order_number,vendor_id,address_id,city_id,total_amount,delivery_fee,payment_method,payment_status,vendors(id,name,latitude,longitude,address,phone),customer_addresses(id,lat,lng,recipient_name,phone,address_line,landmark,city,pincode),cities(id,name,center_lat,center_lng)"
+        @Query("select") select: String = "id,order_number,vendor_id,address_id,city_id,total_amount,delivery_fee,payment_method,payment_status,delivery_instructions,vendors(id,name,latitude,longitude,address,phone),customer_addresses(id,lat,lng,recipient_name,phone,address_line,landmark,city,pincode),cities(id,name,center_lat,center_lng)"
     ): Response<List<OrderDbModel>>
 
     @GET("rest/v1/orders")
@@ -151,7 +151,7 @@ interface SupabaseApiService {
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("order_number") orderNumberFilter: String,
-        @Query("select") select: String = "id,order_number,vendor_id,address_id,city_id,total_amount,delivery_fee,payment_method,payment_status,vendors(id,name,latitude,longitude,address,phone),customer_addresses(id,lat,lng,recipient_name,phone,address_line,landmark,city,pincode),cities(id,name,center_lat,center_lng)"
+        @Query("select") select: String = "id,order_number,vendor_id,address_id,city_id,total_amount,delivery_fee,payment_method,payment_status,delivery_instructions,vendors(id,name,latitude,longitude,address,phone),customer_addresses(id,lat,lng,recipient_name,phone,address_line,landmark,city,pincode),cities(id,name,center_lat,center_lng)"
     ): Response<List<OrderDbModel>>
 
     @GET("rest/v1/order_items")
