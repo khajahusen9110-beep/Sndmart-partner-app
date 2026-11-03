@@ -278,9 +278,18 @@ class LocationTracker private constructor(
             }
             .onFailure {
                 Log.w(TAG, "Location push failed: ${it.message}")
-                _problem.value = Problem.NETWORK
+                if (isAccountInactiveError(it.message)) {
+                    // The server rejects every location from a deactivated partner; stop
+                    // instead of retrying forever. The partner row refresh updates the UI.
+                    stopTracking()
+                } else {
+                    _problem.value = Problem.NETWORK
+                }
             }
     }
+
+    private fun isAccountInactiveError(message: String?): Boolean =
+        message?.contains("not found or inactive", ignoreCase = true) == true
 
     private fun isGpsEnabled(): Boolean = try {
         val lm = locationManager

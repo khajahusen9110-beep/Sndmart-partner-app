@@ -24,6 +24,7 @@ data class DeliveryPartner(
     @Json(name = "approval_status") val approvalStatus: String = "pending", // "pending", "approved", "rejected"
     @Json(name = "rejection_reason") val rejectionReason: String? = null,
     @Json(name = "is_online") val isOnline: Boolean = false,
+    @Json(name = "is_active") val isActive: Boolean = true,
     @Json(name = "is_available") val isAvailable: Boolean = true,
     @Json(name = "is_verified") val isVerified: Boolean = false,
     @Json(name = "total_deliveries") val totalDeliveries: Int = 0,
