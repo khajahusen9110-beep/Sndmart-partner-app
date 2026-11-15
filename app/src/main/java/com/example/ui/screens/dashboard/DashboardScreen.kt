@@ -192,6 +192,8 @@ fun DashboardScreen(
             item { CashLimitBanner(status) }
         }
 
+        item { TiffinTripsSection(viewModel) }
+
         if (autoOfflineNotice && !isOnline) {
             item {
                 AutoOfflineBanner(

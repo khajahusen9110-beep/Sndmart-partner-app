@@ -442,3 +442,36 @@ sealed class UploadState {
     data class Success(val path: String) : UploadState()
     data class Error(val message: String) : UploadState()
 }
+
+// ---------- Tiffin Pickup: a daily home -> school/office tiffin run (and optional box return) ----------
+
+@JsonClass(generateAdapter = true)
+data class TiffinStop(
+    val name: String? = null,
+    val phone: String? = null,
+    val address: String? = null,
+    val landmark: String? = null,
+    val lat: Double? = null,
+    val lng: Double? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class TiffinTrip(
+    val id: String,
+    @Json(name = "trip_date") val tripDate: String = "",
+    val leg: String = "drop", // drop = home -> place, return = place -> home (empty box)
+    val status: String = "scheduled", // scheduled, picked_up, delivered, missed
+    @Json(name = "scheduled_time") val scheduledTime: String = "",
+    val earning: Double = 0.0,
+    @Json(name = "recipient_name") val recipientName: String = "",
+    @Json(name = "recipient_detail") val recipientDetail: String? = null,
+    val kind: String = "school",
+    @Json(name = "handover_note") val handoverNote: String? = null,
+    val home: TiffinStop? = null,
+    val place: TiffinStop? = null
+) {
+    /** Where the partner collects on this leg. */
+    val from: TiffinStop? get() = if (leg == "return") place else home
+    /** Where the partner hands over on this leg. */
+    val to: TiffinStop? get() = if (leg == "return") home else place
+}

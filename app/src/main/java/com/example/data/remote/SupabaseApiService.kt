@@ -332,6 +332,22 @@ interface SupabaseApiService {
         @Body params: Map<String, @JvmSuppressWildcards Any>
     ): Response<ResponseBody>
 
+    // Today's tiffin runs assigned to this partner (Tiffin Pickup).
+    @POST("rest/v1/rpc/tiffin_partner_trips")
+    suspend fun rpcTiffinTrips(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Body params: Map<String, String>
+    ): Response<List<TiffinTrip>>
+
+    // action = "picked_up" | "delivered" (delivered needs the handover photo path).
+    @POST("rest/v1/rpc/tiffin_partner_update_trip")
+    suspend fun rpcTiffinUpdateTrip(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Body params: Map<String, String>
+    ): Response<ResponseBody>
+
     @POST("rest/v1/rpc/delivery_partner_mark_picked_up")
     suspend fun rpcPickup(
         @Header("apikey") apiKey: String,

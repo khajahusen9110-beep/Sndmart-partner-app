@@ -1267,6 +1267,37 @@ class SupabaseRepository(
             .onFailure { Log.d("SupabaseRepo", "Expired offer decline: ${it.message}") }
     }
 
+    // ---------- Tiffin Pickup ----------
+
+    /** Today's tiffin runs for this partner, earliest first. */
+    suspend fun getTiffinTrips(): Result<List<TiffinTrip>> = withContext(Dispatchers.IO) {
+        try {
+            ensureValidSession()
+            val response = apiService.rpcTiffinTrips(prefs.customSupabaseKey, bearer(), emptyMap())
+            if (response.isSuccessful) Result.success(response.body().orEmpty())
+            else Result.failure(Exception(errorMessage(response, "Could not load tiffin trips")))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /** Marks a tiffin run picked up, or delivered (delivered needs the uploaded handover photo path). */
+    suspend fun updateTiffinTrip(tripId: String, action: String, photoPath: String? = null): Result<Boolean> = withContext(Dispatchers.IO) {
+        try {
+            ensureValidSession()
+            val params = buildMap {
+                put("p_trip_id", tripId)
+                put("p_action", action)
+                if (photoPath != null) put("p_photo_url", photoPath)
+            }
+            val response = apiService.rpcTiffinUpdateTrip(prefs.customSupabaseKey, bearer(), params)
+            if (response.isSuccessful) Result.success(true)
+            else Result.failure(Exception(errorMessage(response, "Could not update the tiffin trip")))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     // Proof photo upload to Supabase storage bucket 'delivery-proof-photos'
     suspend fun uploadProofPhoto(
         assignmentId: String,
