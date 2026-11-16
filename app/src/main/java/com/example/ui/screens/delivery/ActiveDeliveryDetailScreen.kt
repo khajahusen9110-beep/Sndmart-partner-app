@@ -728,7 +728,7 @@ fun ActiveDeliveryDetailScreen(
                             Icon(Icons.Default.QrCode2, contentDescription = null)
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                "Show UPI QR • ₹${assignment.totalAmount.toInt()}",
+                                "Show UPI QR • ₹${assignment.totalAmount.let { if (it % 1.0 == 0.0) it.toLong().toString() else "%.2f".format(it) }}",
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -1440,7 +1440,8 @@ private fun CollectByQrDialog(
 ) {
     val scope = rememberCoroutineScope()
     val orderId = assignment.orderId.ifBlank { assignment.orders?.id.orEmpty() }
-    val amount = assignment.totalAmount.toInt()
+    // Exact amount (the QR charges paise too): 128.75 shows as 128.75, 130.0 as 130.
+    val amount = assignment.totalAmount.let { if (it % 1.0 == 0.0) it.toLong().toString() else "%.2f".format(it) }
 
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
