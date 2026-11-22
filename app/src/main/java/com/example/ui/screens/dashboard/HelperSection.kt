@@ -112,7 +112,7 @@ fun HelperSection(viewModel: MainViewModel) {
                         TimeLeft(job)
                         job.pendingExtension?.let { ext ->
                             Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(AmberContainer).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("Customer wants ${ext.minutes} more minutes (+₹${(ext.amount * 0.8).toInt()} approx. for you)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text("Customer wants ${ext.minutes} more minutes (₹${ext.amount.toInt()} extra, added to your share)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     OutlinedButton(onClick = { answerExt(ext.id, false) }, enabled = busyId != job.id, modifier = Modifier.weight(1f)) { Text("Decline") }
                                     Button(onClick = { answerExt(ext.id, true) }, enabled = busyId != job.id, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)) { Text("Accept") }
