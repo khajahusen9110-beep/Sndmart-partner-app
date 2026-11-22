@@ -467,6 +467,8 @@ fun ActiveDeliveryDetailScreen(
                     Spacer(modifier = Modifier.height(10.dp))
 
                     // Step 2: Customer Drop Info
+                    com.example.ui.components.ScheduledBadge(assignment)
+                    if (assignment.orders?.scheduledFor != null) Spacer(modifier = Modifier.height(8.dp))
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         color = if (currentStatus in listOf("picked_up", "out_for_delivery", "arrived_drop")) AmberContainer.copy(alpha = 0.4f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),

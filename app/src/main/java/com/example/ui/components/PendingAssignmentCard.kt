@@ -193,6 +193,8 @@ fun PendingAssignmentCard(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
+                    ScheduledBadge(assignment)
+                    if (assignment.orders?.scheduledFor != null) Spacer(modifier = Modifier.height(8.dp))
                     // Store / Pickup
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(

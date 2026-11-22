@@ -240,6 +240,8 @@ fun ActiveDeliveryCard(
             }
 
             Spacer(modifier = Modifier.height(14.dp))
+            com.example.ui.components.ScheduledBadge(assignment)
+            if (assignment.orders?.scheduledFor != null) Spacer(modifier = Modifier.height(8.dp))
 
             // Pickup Row
             Row(verticalAlignment = Alignment.Top) {
