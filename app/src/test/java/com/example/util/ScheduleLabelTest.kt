@@ -29,4 +29,15 @@ class ScheduleLabelTest {
         assertTrue(ScheduleLabel.isScheduled("scheduled", null)); assertTrue(ScheduleLabel.isScheduled(null, "2026-11-23T16:00:00Z"))
         assertFalse(ScheduleLabel.isScheduled("express", null)); assertFalse(ScheduleLabel.isScheduled(null, null))
     }
+
+    @Test fun readyFrom_futureOnly() {
+        assertEquals("Kal 2:00 PM", ScheduleLabel.readyFrom("2026-11-23T14:00:00+05:30", now, ist))
+        assertNull(ScheduleLabel.readyFrom("2026-11-22T09:00:00+05:30", now, ist))
+        assertNull(ScheduleLabel.readyFrom(null, now, ist))
+    }
+
+    @Test fun placeWord_shopOrRestaurant() {
+        assertEquals("Shop", ScheduleLabel.placeWord("grocery", "cat-1")); assertEquals("Shop", ScheduleLabel.placeWord("vegetable", null))
+        assertEquals("Restaurant", ScheduleLabel.placeWord("hotel", null)); assertEquals("Restaurant", ScheduleLabel.placeWord(null, null))
+    }
 }

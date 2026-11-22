@@ -282,6 +282,29 @@ fun ProfileScreen(
                         }
                     )
                 }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+                Spacer(modifier = Modifier.height(12.dp))
+
+                var tapHaptic by remember { mutableStateOf(com.example.util.AppFeedback.tapEnabled) }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = "Tap Vibration", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
+                        Text(text = "A soft tick when you tap a button", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                    }
+                    Switch(
+                        checked = tapHaptic,
+                        onCheckedChange = {
+                            tapHaptic = it
+                            com.example.util.AppFeedback.setTapEnabled(it)
+                        }
+                    )
+                }
             }
         }
 

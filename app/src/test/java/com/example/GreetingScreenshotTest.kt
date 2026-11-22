@@ -15,8 +15,8 @@ import org.robolectric.annotation.GraphicsMode
 
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-// Robolectric 4.16.1 has no API 36 runtime yet; 35 is the newest supported.
-@Config(qualifiers = RobolectricDeviceQualifiers.Pixel8, sdk = [35])
+// API 36 runtime (the one available to the build).
+@Config(qualifiers = RobolectricDeviceQualifiers.Pixel8, sdk = [36])
 class GreetingScreenshotTest {
 
   @get:Rule val composeTestRule = createComposeRule()

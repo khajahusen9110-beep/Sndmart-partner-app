@@ -138,7 +138,9 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             MyApplicationTheme {
-                MainAppRoot(viewModel = viewModel, onUpdateApp = ::startAppUpdate)
+                androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize().then(com.example.util.TapFeedbackModifier)) {
+                    MainAppRoot(viewModel = viewModel, onUpdateApp = ::startAppUpdate)
+                }
             }
         }
     }

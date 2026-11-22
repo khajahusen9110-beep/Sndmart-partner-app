@@ -256,7 +256,7 @@ fun ActiveDeliveryCard(
                 }
                 Spacer(modifier = Modifier.width(10.dp))
                 Column {
-                    Text(text = "Pickup: ${assignment.storeName}", style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold))
+                    Text(text = "Pickup (${com.example.util.ScheduleLabel.placeWord(assignment.orders?.vendors?.vendorType, assignment.orders?.vendors?.storeCategoryId)}): ${assignment.storeName}", style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold))
                     Text(text = assignment.storeAddress, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }

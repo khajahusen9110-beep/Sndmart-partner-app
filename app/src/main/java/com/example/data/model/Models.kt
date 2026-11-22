@@ -172,6 +172,8 @@ data class OrderDbModel(
 data class VendorDbModel(
     val id: String,
     val name: String? = null,
+    @Json(name = "vendor_type") val vendorType: String? = null,
+    @Json(name = "store_category_id") val storeCategoryId: String? = null,
     val latitude: Double? = null,
     val longitude: Double? = null,
     val address: String? = null,

@@ -32,4 +32,12 @@ fun ScheduledBadge(assignment: DeliveryAssignment, modifier: Modifier = Modifier
         Spacer(Modifier.width(6.dp))
         Text("Scheduled: $window", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold), color = Color(0xFFE65100))
     }
+    val ready = ScheduleLabel.readyFrom(o.prepareFrom)
+    if (ready != null && assignment.status in listOf("assigned", "accepted", "arrived_pickup")) {
+        Text(
+            "Order ready from $ready. Do not reach the shop earlier.",
+            style = MaterialTheme.typography.labelSmall, color = Color(0xFFE65100),
+            modifier = Modifier.padding(start = 8.dp, top = 2.dp)
+        )
+    }
 }

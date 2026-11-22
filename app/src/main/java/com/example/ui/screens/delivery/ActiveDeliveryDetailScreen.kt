@@ -456,7 +456,7 @@ fun ActiveDeliveryDetailScreen(
                                 }
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Column {
-                                    Text(text = "1. Pickup: ${assignment.storeName}", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
+                                    Text(text = "1. Pickup (${com.example.util.ScheduleLabel.placeWord(assignment.orders?.vendors?.vendorType, assignment.orders?.vendors?.storeCategoryId)}): ${assignment.storeName}", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
                                     Text(text = assignment.storeAddress, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
@@ -749,7 +749,7 @@ fun ActiveDeliveryDetailScreen(
                     ) {
                         Column(modifier = Modifier.padding(18.dp)) {
                             Text(
-                                text = "Step 1: Store Pickup Confirmation",
+                                text = "Step 1: ${com.example.util.ScheduleLabel.placeWord(assignment.orders?.vendors?.vendorType, assignment.orders?.vendors?.storeCategoryId)} Pickup Confirmation",
                                 style = MaterialTheme.typography.titleMedium.copy(
                                     fontWeight = FontWeight.Bold,
                                     color = EmeraldPrimary

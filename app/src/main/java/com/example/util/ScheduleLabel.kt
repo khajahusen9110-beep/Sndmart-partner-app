@@ -32,6 +32,18 @@ object ScheduleLabel {
         }
     }
 
+    /** "Aaj 2:00 PM" when the shop starts preparing in the future (a rider should not arrive earlier); null when already past or missing. */
+    fun readyFrom(prepareFrom: String?, nowMs: Long = System.currentTimeMillis(), zone: TimeZone = TimeZone.getDefault()): String? {
+        val t = parseIsoMillis(prepareFrom) ?: return null
+        if (t <= nowMs) return null
+        val clock = SimpleDateFormat("h:mm a", Locale.US).apply { timeZone = zone }
+        return "${dayWord(t, nowMs, zone)} ${clock.format(t)}"
+    }
+
+    /** Pickup place in plain words: a shop is a "Shop", a hotel a "Restaurant". */
+    fun placeWord(vendorType: String?, storeCategoryId: String?): String =
+        if (!storeCategoryId.isNullOrBlank() || (vendorType != null && !vendorType.equals("hotel", true))) "Shop" else "Restaurant"
+
     private fun dayWord(startMs: Long, nowMs: Long, zone: TimeZone): String {
         fun dayStart(ms: Long) = Calendar.getInstance(zone).apply {
             timeInMillis = ms; set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)

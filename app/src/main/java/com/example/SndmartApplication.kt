@@ -16,6 +16,7 @@ class SndmartApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         ServerClock.init(this)
+        com.example.util.AppFeedback.init(this)
 
         // 1. Initialize Firebase App safely
         try {
