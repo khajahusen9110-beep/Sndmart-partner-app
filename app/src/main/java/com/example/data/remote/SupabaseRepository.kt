@@ -1348,7 +1348,10 @@ class SupabaseRepository(
             val bucket = "delivery-proof-photos"
             val fileName = "${photoType}-${System.currentTimeMillis()}.jpg"
             val storagePath = "$assignmentId/$fileName"
-            val requestBody = imageBytes.toRequestBody("image/jpeg".toMediaTypeOrNull())
+            // About 30 KB: uploads fast on a weak network and the proof stays readable. If the photo cannot be shrunk for any
+            // reason the original is sent: a delivery must never be blocked by this.
+            val packed = com.example.util.ImageCompressor.compress(imageBytes, com.example.util.ImageCompressor.PROOF_TARGET_BYTES)?.bytes ?: imageBytes
+            val requestBody = packed.toRequestBody("image/jpeg".toMediaTypeOrNull())
 
             val response = withTimeout(30_000L) {
                 apiService.uploadStorageObject(
