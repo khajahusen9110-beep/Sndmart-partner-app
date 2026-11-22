@@ -70,6 +70,15 @@ fun HelperSection(viewModel: MainViewModel) {
         }
     }
 
+    fun answerExt(extId: String, accept: Boolean) {
+        scope.launch {
+            repo.respondHelperExtension(extId, accept)
+                .onSuccess { viewModel.showMessage(if (accept) "Time added" else "Declined") }
+                .onFailure { viewModel.showMessage(it.message ?: "Could not answer") }
+            tick++
+        }
+    }
+
     fun openPhoto(path: String) {
         scope.launch {
             repo.helperPhotoLink(path).onSuccess { url ->
@@ -101,6 +110,15 @@ fun HelperSection(viewModel: MainViewModel) {
                     "on_the_way" -> ActionButton("Start work (enter code)", busyId == job.id) { codeFor = job to "start" }
                     "started" -> {
                         TimeLeft(job)
+                        job.pendingExtension?.let { ext ->
+                            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(AmberContainer).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("Customer wants ${ext.minutes} more minutes (+₹${(ext.amount * 0.8).toInt()} approx. for you)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedButton(onClick = { answerExt(ext.id, false) }, enabled = busyId != job.id, modifier = Modifier.weight(1f)) { Text("Decline") }
+                                    Button(onClick = { answerExt(ext.id, true) }, enabled = busyId != job.id, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)) { Text("Accept") }
+                                }
+                            }
+                        }
                         ActionButton("Finish work (enter code)", busyId == job.id) { codeFor = job to "complete" }
                     }
                 }

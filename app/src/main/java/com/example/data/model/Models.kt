@@ -452,6 +452,14 @@ sealed class UploadState {
 // ---------- Quick Helper: a short booking (30 / 60 / 90 minutes) for a customer's task ----------
 
 @JsonClass(generateAdapter = true)
+data class HelperExtensionAsk(
+    val id: String,
+    val minutes: Int = 0,
+    val amount: Double = 0.0,
+    @Json(name = "expires_at") val expiresAt: String? = null
+)
+
+@JsonClass(generateAdapter = true)
 data class HelperJob(
     val id: String,
     @Json(name = "booking_number") val bookingNumber: String = "",
@@ -474,5 +482,6 @@ data class HelperJob(
     @Json(name = "payment_collected") val paymentCollected: Boolean = false,
     @Json(name = "started_at") val startedAt: String? = null,
     @Json(name = "ends_at") val endsAt: String? = null,
-    @Json(name = "expires_at") val expiresAt: String? = null
+    @Json(name = "expires_at") val expiresAt: String? = null,
+    @Json(name = "pending_extension") val pendingExtension: HelperExtensionAsk? = null
 )

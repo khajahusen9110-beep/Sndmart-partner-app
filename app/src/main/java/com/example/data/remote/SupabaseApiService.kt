@@ -362,6 +362,13 @@ interface SupabaseApiService {
         @Body params: Map<String, String>
     ): Response<ResponseBody>
 
+    @POST("rest/v1/rpc/helper_extension_respond")
+    suspend fun rpcHelperExtensionRespond(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Body params: Map<String, @JvmSuppressWildcards Any>
+    ): Response<ResponseBody>
+
     // A short-lived link to a customer's reference photo
     @POST("storage/v1/object/sign/helper-task-photos/{path}")
     suspend fun signHelperPhoto(

@@ -1360,6 +1360,18 @@ class SupabaseRepository(
         }
     }
 
+    /** Accept or decline the customer's request for more time. */
+    suspend fun respondHelperExtension(extId: String, accept: Boolean): Result<Boolean> = withContext(Dispatchers.IO) {
+        try {
+            ensureValidSession()
+            val response = apiService.rpcHelperExtensionRespond(prefs.customSupabaseKey, bearer(), mapOf("p_ext_id" to extId, "p_accept" to accept))
+            if (response.isSuccessful) Result.success(true)
+            else Result.failure(Exception(errorMessage(response, "Could not answer the request")))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     /** A link that opens the customer's reference photo for a few minutes. */
     suspend fun helperPhotoLink(path: String): Result<String> = withContext(Dispatchers.IO) {
         try {
