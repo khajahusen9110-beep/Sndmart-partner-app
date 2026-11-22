@@ -151,6 +151,7 @@ private fun JobCard(job: HelperJob, busy: Boolean, onPhoto: (String) -> Unit, ac
                 Text("You earn ₹${job.helperAmount.toInt()} · ${payLabel(job)}", fontWeight = FontWeight.Bold)
             }
             Text(job.taskDescription, fontSize = 15.sp)
+            if (job.paymentStatus == "paid") Text("Paid online in advance. Do not take any money from the customer.", fontSize = 12.sp, color = EmeraldOnContainer, fontWeight = FontWeight.SemiBold)
             val whenText = job.requestedFor?.let { parseIsoMillis(it) }?.let { "Needed at " + SimpleDateFormat("EEE d MMM, h:mm a", Locale.getDefault()).format(Date(it)) } ?: "Needed as soon as possible"
             Text(whenText, fontSize = 12.sp, color = Slate600)
             Text(listOfNotNull(job.customerName, job.addressLine, job.landmark?.takeIf { it.isNotBlank() }?.let { "Near $it" }).joinToString("\n"), fontSize = 14.sp)
@@ -209,4 +210,4 @@ private fun CodeDialog(title: String, hint: String, onDismiss: () -> Unit, onSub
     )
 }
 
-private fun payLabel(job: HelperJob) = if (job.paymentMethod == "upi") "UPI" else "cash"
+private fun payLabel(job: HelperJob) = if (job.paymentStatus == "paid") "paid online" else if (job.paymentMethod == "upi") "UPI" else "cash"
