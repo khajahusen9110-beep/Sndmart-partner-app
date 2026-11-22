@@ -57,6 +57,19 @@ class AppPreferences(context: Context) {
             prefs.edit().putLong(KEY_TOKEN_EXPIRES_AT, value).apply()
         }
 
+    /**
+     * Saves a fresh session in ONE synchronous write. The server rotates the refresh token the moment it answers; if the
+     * phone killed the app before the new token reached the disk, the next start would send the OLD token and the server
+     * would end the whole session ("Your session expired"). apply() is asynchronous, commit() is not.
+     */
+    fun saveSessionTokens(access: String?, refresh: String?, expiresAtMs: Long) {
+        val e = prefs.edit().putLong(KEY_TOKEN_EXPIRES_AT, expiresAtMs)
+        if (!access.isNullOrEmpty()) e.putString(KEY_AUTH_TOKEN, access)
+        if (!refresh.isNullOrEmpty()) e.putString(KEY_REFRESH_TOKEN, refresh)
+        e.commit()
+        if (!access.isNullOrEmpty()) _authToken.value = access
+    }
+
     fun isSessionExpiringSoon(): Boolean {
         val exp = tokenExpiresAt
         if (exp <= 0L) return false

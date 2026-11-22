@@ -49,6 +49,9 @@ class SupabaseRepository(
 
     private val okHttpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
+            // The default allows only 5 requests at a time per host; the start-up asks for 8 things at once.
+            .dispatcher(okhttp3.Dispatcher().apply { maxRequests = 64; maxRequestsPerHost = 24 })
+            .connectionPool(okhttp3.ConnectionPool(8, 5, TimeUnit.MINUTES))
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .authenticator { _, response ->
@@ -66,8 +69,9 @@ class SupabaseRepository(
                     return@authenticator null
                 }
 
+                val sentToken = response.request.header("Authorization")?.removePrefix("Bearer ")?.trim()
                 val refreshSuccess = runBlocking {
-                    refreshSession().isSuccess
+                    refreshOutcome(sentToken) == RefreshOutcome.OK
                 }
 
                 if (refreshSuccess) {
@@ -263,13 +267,7 @@ class SupabaseRepository(
         val token = json.optString("access_token", null)
         val refreshToken = json.optString("refresh_token", null)
         val expiresIn = json.optLong("expires_in", 3600L)
-        if (!token.isNullOrEmpty()) {
-            prefs.token = token
-        }
-        if (!refreshToken.isNullOrEmpty()) {
-            prefs.refreshToken = refreshToken
-        }
-        prefs.tokenExpiresAt = System.currentTimeMillis() + (expiresIn * 1000L)
+        prefs.saveSessionTokens(token, refreshToken, System.currentTimeMillis() + (expiresIn * 1000L))
 
         val userObj = json.optJSONObject("user")
         val userId = userObj?.optString("id") ?: json.optString("id")
@@ -278,47 +276,79 @@ class SupabaseRepository(
         }
     }
 
-    suspend fun refreshSession(): Result<Boolean> = withContext(Dispatchers.IO) {
+    /** The server really refused the session: the rider has to log in again. A bad network never gives this. */
+    class SessionExpiredException : Exception("Your session expired, please log in again")
+
+    /** Tests only: where the refresh call goes. Production always uses the fixed backend address. */
+    internal var refreshBaseUrlForTests: String? = null
+
+    enum class RefreshOutcome { OK, EXPIRED, TRANSIENT }
+
+    // A refresh request must never be sent twice by the HTTP layer: the second one would carry a token the server has
+    // already rotated, and the server then ends the whole session.
+    private val refreshClient: OkHttpClient by lazy {
+        OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).retryOnConnectionFailure(false).build()
+    }
+
+    /**
+     * The only place that rotates the refresh token (one lock for the whole app).
+     * OK = a valid token is stored. EXPIRED = the server refused the session. TRANSIENT = no network / server busy:
+     * the session is NOT lost, try again later.
+     */
+    private suspend fun refreshOutcome(staleAccessToken: String? = null): RefreshOutcome = withContext(Dispatchers.IO) {
         refreshMutex.withLock {
-            val currentRefreshToken = prefs.refreshToken
-            if (currentRefreshToken.isNullOrBlank()) {
-                Log.w("SupabaseRepo", "No refresh token available to refresh session")
-                return@withContext Result.failure(Exception("No refresh token available"))
+            // somebody else refreshed while this call waited for the lock
+            if (staleAccessToken != null && !prefs.token.isNullOrBlank() && prefs.token != staleAccessToken && !prefs.isSessionExpiringSoon()) {
+                return@withLock RefreshOutcome.OK
             }
-
+            val used = prefs.refreshToken
+            if (used.isNullOrBlank()) return@withLock RefreshOutcome.EXPIRED
             try {
-                Log.d("SupabaseRepo", "Attempting automatic Supabase session refresh...")
-                val response = apiService.refreshToken(
-                    apiKey = prefs.customSupabaseKey,
-                    body = mapOf("refresh_token" to currentRefreshToken)
-                )
-
-                if (response.isSuccessful && response.body() != null) {
-                    val raw = response.body()!!.string()
-                    val json = JSONObject(raw)
-                    handleSessionSuccess(json)
-                    Log.i("SupabaseRepo", "Supabase session refreshed successfully. Next expiry in ${json.optLong("expires_in", 3600L)}s")
-                    _dataFetchError.value = null
-                    Result.success(true)
-                } else {
-                    val code = response.code()
-                    val err = response.errorBody()?.string()
-                    Log.e("SupabaseRepo", "Session refresh failed with HTTP $code: $err")
-                    if (code == 400 || code == 401) {
+                val base = (refreshBaseUrlForTests ?: prefs.customSupabaseUrl).let { if (it.endsWith("/")) it else "$it/" }
+                val key = prefs.customSupabaseKey
+                val req = okhttp3.Request.Builder().url("${base}auth/v1/token?grant_type=refresh_token")
+                    .post(JSONObject().put("refresh_token", used).toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull()))
+                    .header("apikey", key).header("Authorization", "Bearer $key")
+                    .header("Content-Type", "application/json").header("Accept", "application/json").build()
+                refreshClient.newCall(req).execute().use { res ->
+                    val text = res.body?.string().orEmpty()
+                    if (res.isSuccessful) {
+                        val json = JSONObject(text)
+                        if (json.optString("access_token").isBlank()) return@withLock RefreshOutcome.TRANSIENT
+                        handleSessionSuccess(json)
+                        _dataFetchError.value = null
+                        Log.i("SupabaseRepo", "Session refreshed. Next expiry in ${json.optLong("expires_in", 3600L)}s")
+                        return@withLock RefreshOutcome.OK
+                    }
+                    Log.w("SupabaseRepo", "Session refresh failed with HTTP ${res.code}")
+                    if (res.code == 400 || res.code == 401 || res.code == 403) {
+                        // a newer token was stored meanwhile (a login, another refresh): this failure is about the old one
+                        val now = prefs.refreshToken
+                        if (!now.isNullOrBlank() && now != used) return@withLock RefreshOutcome.OK
                         prefs.clearSession()
                         val msg = "Your session expired, please log in again"
                         _dataFetchError.value = msg
-                        coroutineScope.launch {
-                            onSessionExpired?.invoke(msg)
-                        }
+                        coroutineScope.launch { onSessionExpired?.invoke(msg) }
+                        return@withLock RefreshOutcome.EXPIRED
                     }
-                    Result.failure(Exception("Failed to refresh session (HTTP $code)"))
+                    return@withLock RefreshOutcome.TRANSIENT // 429 / 5xx: the server is busy, the session is fine
                 }
             } catch (e: Exception) {
-                Log.e("SupabaseRepo", "Exception during session refresh: ${e.message}")
-                Result.failure(e)
+                Log.w("SupabaseRepo", "Session refresh: no network (${e.javaClass.simpleName})")
+                RefreshOutcome.TRANSIENT // never log a rider out because the network blinked
             }
         }
+    }
+
+    suspend fun refreshSession(): Result<Boolean> = when (refreshOutcome()) {
+        RefreshOutcome.OK -> Result.success(true)
+        RefreshOutcome.EXPIRED -> Result.failure(SessionExpiredException())
+        RefreshOutcome.TRANSIENT -> Result.failure(Exception("No connection. Please try again."))
+    }
+
+    /** A failed refresh after a 401: only a real refusal says "session expired"; a network blink only says "no connection". */
+    private fun noteRefreshFailure(r: Result<Boolean>) {
+        _dataFetchError.value = if (r.exceptionOrNull() is SessionExpiredException) "Your session expired, please log in again" else "No connection. Showing the last data."
     }
 
     suspend fun ensureValidSession(): Result<Boolean> = withContext(Dispatchers.IO) {
@@ -328,6 +358,12 @@ class SupabaseRepository(
             return@withContext Result.failure(Exception("No active session"))
         }
 
+        // A token that is known to be valid for a while needs no check with the server (a stale one is renewed on the first 401).
+        // This used to cost one extra round trip on every app start and every return to the app.
+        if (!token.isNullOrBlank() && prefs.tokenExpiresAt > 0L && !prefs.isSessionExpiringSoon()) {
+            return@withContext Result.success(true)
+        }
+
         // Proactively refresh if expiring soon or already expired
         if (prefs.isSessionExpiringSoon() && !refreshToken.isNullOrBlank()) {
             Log.d("SupabaseRepo", "Session is expiring soon or expired, refreshing proactively...")
@@ -335,6 +371,8 @@ class SupabaseRepository(
             if (refreshResult.isSuccess) {
                 return@withContext Result.success(true)
             }
+            // only a real refusal ends the session; with no network the rider stays in with the saved login
+            if (refreshResult.exceptionOrNull() is SessionExpiredException) return@withContext refreshResult
         }
 
         // Validate token by pinging auth/v1/user
@@ -348,7 +386,8 @@ class SupabaseRepository(
                     return@withContext Result.success(true)
                 } else if (userRes.code() == 401) {
                     Log.w("SupabaseRepo", "Access token invalid (401), attempting refresh...")
-                    return@withContext refreshSession()
+                    val again = refreshSession()
+                    return@withContext if (again.isSuccess || again.exceptionOrNull() !is SessionExpiredException) Result.success(true) else again
                 }
             } catch (e: Exception) {
                 Log.w("SupabaseRepo", "Could not verify session online: ${e.message}")
@@ -1776,7 +1815,18 @@ class SupabaseRepository(
      * page = 0 refreshes everything loaded so far (all pages up to [assignmentsPage]) so a
      * background refresh does not drop rows the user already scrolled to.
      */
-    suspend fun fetchAssignments(page: Int = 0, pageSize: Int = ASSIGNMENTS_PAGE_SIZE): List<DeliveryAssignment> = withContext(Dispatchers.IO) {
+    // The poll, the start-up load, a push and a return to the app can ask for the first page at the same moment: they share one request.
+    private var firstPageInFlight: Deferred<List<DeliveryAssignment>>? = null
+
+    suspend fun fetchAssignments(page: Int = 0, pageSize: Int = ASSIGNMENTS_PAGE_SIZE): List<DeliveryAssignment> {
+        if (page != 0) return fetchAssignmentsNow(page, pageSize)
+        firstPageInFlight?.takeIf { it.isActive }?.let { return it.await() }
+        val job = coroutineScope.async { fetchAssignmentsNow(0, pageSize) }
+        firstPageInFlight = job
+        return try { job.await() } finally { if (firstPageInFlight === job) firstPageInFlight = null }
+    }
+
+    private suspend fun fetchAssignmentsNow(page: Int = 0, pageSize: Int = ASSIGNMENTS_PAGE_SIZE): List<DeliveryAssignment> = withContext(Dispatchers.IO) {
         val partnerId = _currentPartner.value?.id ?: prefs.currentPartnerId ?: return@withContext emptyList()
         val token = prefs.token ?: return@withContext _assignments.value
         val limit = if (page == 0) pageSize * (assignmentsPage + 1) else pageSize
@@ -1801,9 +1851,7 @@ class SupabaseRepository(
                         offset = offset
                     )
                 } else {
-                    val msg = "Your session expired, please log in again"
-                    _dataFetchError.value = msg
-                    coroutineScope.launch { onSessionExpired?.invoke(msg) }
+                    noteRefreshFailure(refreshed)
                     return@withContext _assignments.value
                 }
             }
@@ -2058,9 +2106,7 @@ class SupabaseRepository(
                         partnerIdFilter = "eq.$partnerId"
                     )
                 } else {
-                    val msg = "Your session expired, please log in again"
-                    _dataFetchError.value = msg
-                    coroutineScope.launch { onSessionExpired?.invoke(msg) }
+                    noteRefreshFailure(refreshed)
                     return@withContext _earnings.value
                 }
             }
@@ -2108,9 +2154,7 @@ class SupabaseRepository(
                         limit = CASH_LEDGER_LIMIT
                     )
                 } else {
-                    val msg = "Your session expired, please log in again"
-                    _dataFetchError.value = msg
-                    coroutineScope.launch { onSessionExpired?.invoke(msg) }
+                    noteRefreshFailure(refreshed)
                     return@withContext _cashLedger.value
                 }
             }
@@ -2156,9 +2200,7 @@ class SupabaseRepository(
                         partnerIdFilter = "eq.$partnerId"
                     )
                 } else {
-                    val msg = "Your session expired, please log in again"
-                    _dataFetchError.value = msg
-                    coroutineScope.launch { onSessionExpired?.invoke(msg) }
+                    noteRefreshFailure(refreshed)
                     return@withContext _paymentRequests.value
                 }
             }
@@ -2202,9 +2244,7 @@ class SupabaseRepository(
                         userIdFilter = "eq.$userId"
                     )
                 } else {
-                    val msg = "Your session expired, please log in again"
-                    _dataFetchError.value = msg
-                    coroutineScope.launch { onSessionExpired?.invoke(msg) }
+                    noteRefreshFailure(refreshed)
                     return@withContext _notifications.value
                 }
             }
@@ -2270,9 +2310,7 @@ class SupabaseRepository(
                         partnerIdFilter = "eq.$partnerId"
                     )
                 } else {
-                    val msg = "Your session expired, please log in again"
-                    _dataFetchError.value = msg
-                    coroutineScope.launch { onSessionExpired?.invoke(msg) }
+                    noteRefreshFailure(refreshed)
                     return@withContext _reviews.value
                 }
             }

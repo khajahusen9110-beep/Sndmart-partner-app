@@ -317,11 +317,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun checkInitialSession() {
         viewModelScope.launch {
-            delay(300)
             val token = prefs.token
             val refreshToken = prefs.refreshToken
             val userId = prefs.userId
             if ((!token.isNullOrBlank() || !refreshToken.isNullOrBlank()) && !userId.isNullOrBlank()) {
+                // Fast start: a rider who was approved last time sees the dashboard from the saved profile at once.
+                // Nothing starts from this (no tracking, no alerts); the real profile follows a moment later and does the usual set-up.
+                val savedId = prefs.currentPartnerId
+                if (!savedId.isNullOrBlank() && prefs.approvalStatus.equals("approved", ignoreCase = true) && _authUiState.value !is AuthUiState.Authenticated) {
+                    _authUiState.value = AuthUiState.Authenticated(
+                        DeliveryPartner(
+                            id = savedId, userId = userId, name = prefs.partnerName, vehicleType = prefs.partnerVehicleType,
+                            vehicleNumber = prefs.partnerVehicleNumber, approvalStatus = "approved",
+                            isOnline = prefs.onlineState, isAvailable = prefs.availableState
+                        )
+                    )
+                }
                 val sessionValid = repository.ensureValidSession().isSuccess
                 if (!sessionValid) {
                     endSession("Your session expired, please log in again")
