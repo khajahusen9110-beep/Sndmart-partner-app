@@ -111,8 +111,8 @@ fun HelperSection(viewModel: MainViewModel) {
         toCollect.forEach { job ->
             Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = AmberContainer)) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Collect ₹${job.priceTotal.toInt()} from the customer", fontWeight = FontWeight.Bold)
-                    Text("${job.bookingNumber} · cash or UPI. You keep ₹${job.helperAmount.toInt()}; the rest is Sndmart's share.", fontSize = 13.sp, color = Slate600)
+                    Text("Collect ₹${job.priceTotal.toInt()} from the customer by ${payLabel(job)}", fontWeight = FontWeight.Bold)
+                    Text("${job.bookingNumber} · ${payLabel(job)}. You keep ₹${job.helperAmount.toInt()}; the rest is Sndmart's share.", fontSize = 13.sp, color = Slate600)
                     ActionButton("Payment received", busyId == job.id) { act(job, "collected", done = "Saved") }
                 }
             }
@@ -148,7 +148,7 @@ private fun JobCard(job: HelperJob, busy: Boolean, onPhoto: (String) -> Unit, ac
                     Text("${job.durationMinutes} min · ${job.taskType}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TealOnContainer)
                 }
                 Spacer(Modifier.weight(1f))
-                Text("You earn ₹${job.helperAmount.toInt()}", fontWeight = FontWeight.Bold)
+                Text("You earn ₹${job.helperAmount.toInt()} · ${payLabel(job)}", fontWeight = FontWeight.Bold)
             }
             Text(job.taskDescription, fontSize = 15.sp)
             val whenText = job.requestedFor?.let { parseIsoMillis(it) }?.let { "Needed at " + SimpleDateFormat("EEE d MMM, h:mm a", Locale.getDefault()).format(Date(it)) } ?: "Needed as soon as possible"
@@ -208,3 +208,5 @@ private fun CodeDialog(title: String, hint: String, onDismiss: () -> Unit, onSub
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
+
+private fun payLabel(job: HelperJob) = if (job.paymentMethod == "upi") "UPI" else "cash"

@@ -469,6 +469,7 @@ data class HelperJob(
     @Json(name = "contact_phone") val contactPhone: String? = null,
     @Json(name = "price_total") val priceTotal: Double = 0.0,
     @Json(name = "helper_amount") val helperAmount: Double = 0.0,
+    @Json(name = "payment_method") val paymentMethod: String = "cash",
     @Json(name = "payment_collected") val paymentCollected: Boolean = false,
     @Json(name = "started_at") val startedAt: String? = null,
     @Json(name = "ends_at") val endsAt: String? = null,
