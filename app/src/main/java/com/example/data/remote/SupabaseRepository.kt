@@ -1306,32 +1306,70 @@ class SupabaseRepository(
             .onFailure { Log.d("SupabaseRepo", "Expired offer decline: ${it.message}") }
     }
 
-    // ---------- Tiffin Pickup ----------
+    // ---------- Quick Helper ----------
 
-    /** Today's tiffin runs for this partner, earliest first. */
-    suspend fun getTiffinTrips(): Result<List<TiffinTrip>> = withContext(Dispatchers.IO) {
+    /** Open requests near this helper (empty unless the City Admin made this partner a helper). */
+    suspend fun getHelperRequests(): Result<List<HelperJob>> = withContext(Dispatchers.IO) {
         try {
             ensureValidSession()
-            val response = apiService.rpcTiffinTrips(prefs.customSupabaseKey, bearer(), emptyMap())
+            val response = apiService.rpcHelperRequests(prefs.customSupabaseKey, bearer(), emptyMap())
             if (response.isSuccessful) Result.success(response.body().orEmpty())
-            else Result.failure(Exception(errorMessage(response, "Could not load tiffin trips")))
+            else Result.failure(Exception(errorMessage(response, "Could not load helper requests")))
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
-    /** Marks a tiffin run picked up, or delivered (delivered needs the uploaded handover photo path). */
-    suspend fun updateTiffinTrip(tripId: String, action: String, photoPath: String? = null): Result<Boolean> = withContext(Dispatchers.IO) {
+    /** This helper's own recent bookings, newest first. */
+    suspend fun getHelperBookings(): Result<List<HelperJob>> = withContext(Dispatchers.IO) {
+        try {
+            ensureValidSession()
+            val response = apiService.rpcHelperMyBookings(prefs.customSupabaseKey, bearer(), emptyMap())
+            if (response.isSuccessful) Result.success(response.body().orEmpty())
+            else Result.failure(Exception(errorMessage(response, "Could not load your bookings")))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun acceptHelperRequest(id: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        try {
+            ensureValidSession()
+            val response = apiService.rpcHelperAccept(prefs.customSupabaseKey, bearer(), mapOf("p_id" to id))
+            if (response.isSuccessful) Result.success(true)
+            else Result.failure(Exception(errorMessage(response, "Could not accept the request")))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /** action: on_the_way, start (customer's start code), complete (customer's end code), collected. */
+    suspend fun updateHelperBooking(id: String, action: String, code: String? = null): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
             ensureValidSession()
             val params = buildMap {
-                put("p_trip_id", tripId)
+                put("p_id", id)
                 put("p_action", action)
-                if (photoPath != null) put("p_photo_url", photoPath)
+                if (code != null) put("p_code", code)
             }
-            val response = apiService.rpcTiffinUpdateTrip(prefs.customSupabaseKey, bearer(), params)
+            val response = apiService.rpcHelperUpdate(prefs.customSupabaseKey, bearer(), params)
             if (response.isSuccessful) Result.success(true)
-            else Result.failure(Exception(errorMessage(response, "Could not update the tiffin trip")))
+            else Result.failure(Exception(errorMessage(response, "Could not update the booking")))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /** A link that opens the customer's reference photo for a few minutes. */
+    suspend fun helperPhotoLink(path: String): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            ensureValidSession()
+            val response = apiService.signHelperPhoto(prefs.customSupabaseKey, bearer(), path, mapOf("expiresIn" to 600))
+            if (!response.isSuccessful) return@withContext Result.failure(Exception("Could not open the photo"))
+            val signed = JSONObject(response.body()?.string().orEmpty()).optString("signedURL")
+            if (signed.isBlank()) return@withContext Result.failure(Exception("Could not open the photo"))
+            val base = prefs.customSupabaseUrl.trimEnd('/')
+            Result.success(if (signed.startsWith("http")) signed else "$base/storage/v1${if (signed.startsWith("/")) "" else "/"}$signed")
         } catch (e: Exception) {
             Result.failure(e)
         }

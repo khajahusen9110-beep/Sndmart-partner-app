@@ -449,35 +449,28 @@ sealed class UploadState {
     data class Error(val message: String) : UploadState()
 }
 
-// ---------- Tiffin Pickup: a daily home -> school/office tiffin run (and optional box return) ----------
+// ---------- Quick Helper: a short booking (30 / 60 / 90 minutes) for a customer's task ----------
 
 @JsonClass(generateAdapter = true)
-data class TiffinStop(
-    val name: String? = null,
-    val phone: String? = null,
-    val address: String? = null,
+data class HelperJob(
+    val id: String,
+    @Json(name = "booking_number") val bookingNumber: String = "",
+    val status: String = "requested", // requested, accepted, on_the_way, started, completed, cancelled, expired
+    @Json(name = "task_type") val taskType: String = "",
+    @Json(name = "task_description") val taskDescription: String = "",
+    @Json(name = "photo_paths") val photoPaths: List<String> = emptyList(),
+    @Json(name = "duration_minutes") val durationMinutes: Int = 30,
+    @Json(name = "requested_for") val requestedFor: String? = null,
+    @Json(name = "address_line") val addressLine: String = "",
     val landmark: String? = null,
     val lat: Double? = null,
-    val lng: Double? = null
+    val lng: Double? = null,
+    @Json(name = "customer_name") val customerName: String? = null,
+    @Json(name = "contact_phone") val contactPhone: String? = null,
+    @Json(name = "price_total") val priceTotal: Double = 0.0,
+    @Json(name = "helper_amount") val helperAmount: Double = 0.0,
+    @Json(name = "payment_collected") val paymentCollected: Boolean = false,
+    @Json(name = "started_at") val startedAt: String? = null,
+    @Json(name = "ends_at") val endsAt: String? = null,
+    @Json(name = "expires_at") val expiresAt: String? = null
 )
-
-@JsonClass(generateAdapter = true)
-data class TiffinTrip(
-    val id: String,
-    @Json(name = "trip_date") val tripDate: String = "",
-    val leg: String = "drop", // drop = home -> place, return = place -> home (empty box)
-    val status: String = "scheduled", // scheduled, picked_up, delivered, missed
-    @Json(name = "scheduled_time") val scheduledTime: String = "",
-    val earning: Double = 0.0,
-    @Json(name = "recipient_name") val recipientName: String = "",
-    @Json(name = "recipient_detail") val recipientDetail: String? = null,
-    val kind: String = "school",
-    @Json(name = "handover_note") val handoverNote: String? = null,
-    val home: TiffinStop? = null,
-    val place: TiffinStop? = null
-) {
-    /** Where the partner collects on this leg. */
-    val from: TiffinStop? get() = if (leg == "return") place else home
-    /** Where the partner hands over on this leg. */
-    val to: TiffinStop? get() = if (leg == "return") home else place
-}

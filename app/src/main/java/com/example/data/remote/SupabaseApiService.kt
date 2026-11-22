@@ -332,20 +332,43 @@ interface SupabaseApiService {
         @Body params: Map<String, @JvmSuppressWildcards Any>
     ): Response<ResponseBody>
 
-    // Today's tiffin runs assigned to this partner (Tiffin Pickup).
-    @POST("rest/v1/rpc/tiffin_partner_trips")
-    suspend fun rpcTiffinTrips(
+    // Quick Helper
+    @POST("rest/v1/rpc/helper_partner_requests")
+    suspend fun rpcHelperRequests(
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Body params: Map<String, String>
-    ): Response<List<TiffinTrip>>
+    ): Response<List<HelperJob>>
 
-    // action = "picked_up" | "delivered" (delivered needs the handover photo path).
-    @POST("rest/v1/rpc/tiffin_partner_update_trip")
-    suspend fun rpcTiffinUpdateTrip(
+    @POST("rest/v1/rpc/helper_partner_my_bookings")
+    suspend fun rpcHelperMyBookings(
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Body params: Map<String, String>
+    ): Response<List<HelperJob>>
+
+    @POST("rest/v1/rpc/helper_partner_accept")
+    suspend fun rpcHelperAccept(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Body params: Map<String, String>
+    ): Response<ResponseBody>
+
+    // action = "on_the_way" | "start" | "complete" | "collected"; start and complete need the customer's code.
+    @POST("rest/v1/rpc/helper_partner_update")
+    suspend fun rpcHelperUpdate(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Body params: Map<String, String>
+    ): Response<ResponseBody>
+
+    // A short-lived link to a customer's reference photo
+    @POST("storage/v1/object/sign/helper-task-photos/{path}")
+    suspend fun signHelperPhoto(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Path(value = "path", encoded = true) path: String,
+        @Body params: Map<String, Int>
     ): Response<ResponseBody>
 
     @POST("rest/v1/rpc/delivery_partner_mark_picked_up")
