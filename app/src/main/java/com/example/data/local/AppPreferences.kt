@@ -158,6 +158,19 @@ class AppPreferences(context: Context) {
         get() = prefs.getBoolean(KEY_AUTOSTART_TIP, false)
         set(value) = prefs.edit().putBoolean(KEY_AUTOSTART_TIP, value).apply()
 
+    /**
+     * The recommended permissions (all-the-time location, full-screen alerts, battery) the partner has already been sent
+     * to grant. Each is asked ONCE, not on every app start: some phones (Xiaomi / Poco) never report them as granted.
+     */
+    var askedRecommendedPermissions: Set<String>
+        get() = prefs.getStringSet("asked_recommended_permissions", emptySet()).orEmpty().toSet()
+        set(value) = prefs.edit().putStringSet("asked_recommended_permissions", value).apply()
+
+    /** Full-screen alerts were seen granted once: if they are later seen off, that is a real change and worth a nudge. */
+    var fullScreenEverGranted: Boolean
+        get() = prefs.getBoolean("full_screen_ever_granted", false)
+        set(value) = prefs.edit().putBoolean("full_screen_ever_granted", value).apply()
+
     var soundAlertsEnabled: Boolean
         get() = prefs.getBoolean(KEY_SOUND_ALERTS, true)
         set(value) = prefs.edit().putBoolean(KEY_SOUND_ALERTS, value).apply()

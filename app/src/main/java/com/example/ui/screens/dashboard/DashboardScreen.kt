@@ -72,14 +72,19 @@ fun DashboardScreen(
 
     // Location, notifications and full-screen alerts are required to go online; background
     // location and battery are recommended and asked once per session.
-    val missingRequirements = rememberMissingGoOnlineRequirements()
+    val missingRaw = rememberMissingGoOnlineRequirements()
+    // A recommended permission the partner was already sent to grant is not asked again on every start (it is saved on the
+    // phone): some phones keep reporting it as off even after it was allowed. Only a real change (full-screen alerts seen
+    // on, then off) is raised again.
+    var askedRecommended by remember { mutableStateOf(viewModel.prefs.askedRecommendedPermissions) }
+    if (GoOnlineRequirement.FULL_SCREEN !in missingRaw && !viewModel.prefs.fullScreenEverGranted) viewModel.prefs.fullScreenEverGranted = true
+    val fullScreenLost = GoOnlineRequirement.FULL_SCREEN in missingRaw && viewModel.prefs.fullScreenEverGranted
+    val missingRequirements = missingRaw.filter { it.required || it.name !in askedRecommended || (it == GoOnlineRequirement.FULL_SCREEN && fullScreenLost) }
     val missingRequired = missingRequirements.filter { it.required }
-    // Full-screen alerts are recommended (not a hard blocker) but important, so keep nudging for
-    // them in the banner alongside any missing required permissions.
+    // Full-screen alerts are important, so the banner nudges for them until the partner has been sent to allow them once.
     val missingAlertNudge = missingRequirements.filter {
         it.required || it == GoOnlineRequirement.FULL_SCREEN
     }
-    var askedRecommended by rememberSaveable { mutableStateOf(setOf<String>()) }
     var showSetup by remember { mutableStateOf(false) }
     val locationProblem by viewModel.locationNotUpdating.collectAsState()
     val autoOfflineNotice by viewModel.autoOfflineNotice.collectAsState()
@@ -125,7 +130,10 @@ fun DashboardScreen(
     }
 
     fun request(req: GoOnlineRequirement) {
-        if (!req.required) askedRecommended = askedRecommended + req.name
+        if (!req.required) {
+            askedRecommended = askedRecommended + req.name
+            viewModel.prefs.askedRecommendedPermissions = askedRecommended
+        }
         when (req) {
             GoOnlineRequirement.LOCATION -> fineLocationLauncher.launch(
                 arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
@@ -174,6 +182,7 @@ fun DashboardScreen(
             onRequest = { request(it) },
             onGoOnline = {
                 askedRecommended = askedRecommended + missingRequirements.filter { !it.required }.map { it.name }
+                viewModel.prefs.askedRecommendedPermissions = askedRecommended
                 closeSetup()
                 viewModel.goOnlineWithLocation()
             },
