@@ -31,6 +31,10 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+private val HBlue = androidx.compose.ui.graphics.Color(0xFF2563EB)
+private val HBlueSoft = androidx.compose.ui.graphics.Color(0xFFDBEAFE)
+private val HBlueDark = androidx.compose.ui.graphics.Color(0xFF1D4ED8)
+
 /**
  * The Helper tab: Quick Helper bookings, kept apart from delivery orders. Requests nearby (they also ring like an order),
  * the work in hand (on the way, start code, end code, extra time), the cash still to collect, and the history.
@@ -104,9 +108,9 @@ fun HelperTab(viewModel: MainViewModel) {
     ) {
         SummaryRow(ui)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = section == 0, onClick = { section = 0 }, label = { Text("Requests (${open.size})") })
-            FilterChip(selected = section == 1, onClick = { section = 1 }, label = { Text("My work (${active.size + toCollect.size})") })
-            FilterChip(selected = section == 2, onClick = { section = 2 }, label = { Text("History") })
+            FilterChip(selected = section == 0, onClick = { section = 0 }, label = { Text("Requests (${open.size})") }, colors = helperChipColors())
+            FilterChip(selected = section == 1, onClick = { section = 1 }, label = { Text("My work (${active.size + toCollect.size})") }, colors = helperChipColors())
+            FilterChip(selected = section == 2, onClick = { section = 2 }, label = { Text("History") }, colors = helperChipColors())
         }
 
         if (section == 1) {
@@ -174,10 +178,10 @@ fun HelperTab(viewModel: MainViewModel) {
 @Composable
 private fun SummaryRow(ui: MainViewModel.HelperUi) {
     val s = ui.summary ?: return
-    Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = EmeraldContainer)) {
+    Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = HBlueSoft)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Column { Text("Today", fontSize = 12.sp, color = Slate600); Text("₹${s.todayEarned.toInt()} · ${s.todayJobs} job${if (s.todayJobs == 1) "" else "s"}", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp) }
+                Column { Text("Today", fontSize = 12.sp, color = Slate600); Text("₹${s.todayEarned.toInt()} · ${s.todayJobs} job${if (s.todayJobs == 1) "" else "s"}", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, color = HBlueDark) }
                 Column(horizontalAlignment = Alignment.End) { Text("All time", fontSize = 12.sp, color = Slate600); Text("₹${s.totalEarned.toInt()} · ${s.totalJobs}", fontWeight = FontWeight.Bold) }
             }
             if (ui.ratings > 0 && ui.rating != null) Text("Rating ★ ${"%.1f".format(ui.rating)} (${ui.ratings})", fontSize = 12.sp, color = Slate600)
@@ -210,9 +214,10 @@ private fun JobCard(job: HelperJob, busy: Boolean, onPhoto: (String) -> Unit, ac
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            JobSteps(job.status)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.clip(RoundedCornerShape(8.dp)).background(TealContainer).padding(horizontal = 8.dp, vertical = 3.dp)) {
-                    Text("${job.durationMinutes} min · ${job.taskType}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TealOnContainer)
+                Box(Modifier.clip(RoundedCornerShape(8.dp)).background(HBlueSoft).padding(horizontal = 8.dp, vertical = 3.dp)) {
+                    Text("${job.durationMinutes} min · ${job.taskType}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = HBlueDark)
                 }
                 Spacer(Modifier.weight(1f))
                 Text("You earn ₹${job.helperAmount.toInt()} · ${payLabel(job)}", fontWeight = FontWeight.Bold)
@@ -246,14 +251,38 @@ private fun TimeLeft(job: HelperJob) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(end) { while (true) { now = System.currentTimeMillis(); delay(1000) } }
     val s = ((end - now) / 1000).coerceAtLeast(0)
-    Text("Time left: %d:%02d".format(s / 60, s % 60), fontWeight = FontWeight.Bold, color = if (s == 0L) AmberOnContainer else Slate600)
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(HBlueSoft).padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("%02d:%02d".format(s / 60, s % 60), fontSize = 32.sp, fontWeight = FontWeight.Black, color = if (s == 0L) AmberOnContainer else HBlue)
+        Text(if (s == 0L) "Time is over. Finish the work." else "Time left", fontSize = 12.sp, color = Slate600)
+    }
 }
+
+/** Requested > Assigned > Arrived > Working > Done, like the customer sees it. */
+@Composable
+private fun JobSteps(status: String) {
+    val labels = listOf("Request", "Accepted", "On way", "Working", "Done")
+    val idx = when (status) { "requested" -> 0; "accepted" -> 1; "on_the_way" -> 2; "started" -> 3; "completed" -> 4; else -> -1 }
+    if (idx < 0) return
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        labels.forEachIndexed { i, l ->
+            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Box(Modifier.size(22.dp).clip(androidx.compose.foundation.shape.CircleShape).background(if (i <= idx) HBlue else androidx.compose.ui.graphics.Color(0xFFE5E7EB)), contentAlignment = Alignment.Center) {
+                    Text("${i + 1}", color = if (i <= idx) androidx.compose.ui.graphics.Color.White else Slate600, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+                Text(l, fontSize = 10.sp, color = if (i <= idx) HBlueDark else Slate600, fontWeight = if (i == idx) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
+            }
+        }
+    }
+}
+
+@Composable
+private fun helperChipColors() = FilterChipDefaults.filterChipColors(selectedContainerColor = HBlueSoft, selectedLabelColor = HBlueDark)
 
 @Composable
 private fun ActionButton(text: String, busy: Boolean, onClick: () -> Unit) {
     Button(
         onClick = onClick, enabled = !busy, modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
+        shape = RoundedCornerShape(14.dp), colors = ButtonDefaults.buttonColors(containerColor = HBlue), contentPadding = PaddingValues(vertical = 14.dp)
     ) { Text(if (busy) "Please wait…" else text, fontWeight = FontWeight.Bold) }
 }
 
