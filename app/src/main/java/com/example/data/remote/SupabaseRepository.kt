@@ -1309,6 +1309,15 @@ class SupabaseRepository(
     // ---------- Quick Helper ----------
 
     /** Is this partner a helper (the Helper tab shows only then, or when helper bookings exist). */
+    suspend fun getIncentiveStatus(): Result<IncentiveStatus> = withContext(Dispatchers.IO) {
+        try {
+            ensureValidSession()
+            val response = apiService.rpcIncentiveStatus(prefs.customSupabaseKey, bearer(), emptyMap())
+            if (!response.isSuccessful) return@withContext Result.failure(Exception(errorMessage(response, "Could not load incentives")))
+            Result.success(IncentiveStatus.from(JSONObject(response.body()?.string().orEmpty())))
+        } catch (e: Exception) { Result.failure(e) }
+    }
+
     /** Whether to invite this partner to join as a helper: (cityEnabled, helperEnabled, requestStatus). */
     suspend fun getHelperJoinInfo(): Result<Triple<Boolean, Boolean, String?>> = withContext(Dispatchers.IO) {
         try {

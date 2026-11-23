@@ -332,6 +332,10 @@ interface SupabaseApiService {
         @Body params: Map<String, @JvmSuppressWildcards Any>
     ): Response<ResponseBody>
 
+    // Incentives
+    @POST("rest/v1/rpc/partner_incentive_status")
+    suspend fun rpcIncentiveStatus(@Header("apikey") apiKey: String, @Header("Authorization") bearerToken: String, @Body params: Map<String, String>): Response<ResponseBody>
+
     // Quick Helper: join as helper
     @POST("rest/v1/rpc/partner_helper_join_info")
     suspend fun rpcHelperJoinInfo(@Header("apikey") apiKey: String, @Header("Authorization") bearerToken: String, @Body params: Map<String, String>): Response<ResponseBody>

@@ -494,3 +494,45 @@ data class HelperSummaryDto(
     @Json(name = "to_receive") val toReceive: Double = 0.0,
     @Json(name = "to_pay") val toPay: Double = 0.0
 )
+
+
+/** Partner incentives for today (read by hand from the server's JSON). */
+data class IncentiveSlab(val minDeliveries: Int, val bonus: Double, val reached: Boolean)
+data class IncentivePeak(val name: String, val extra: Double, val startsAt: String?, val endsAt: String?)
+data class IncentiveDay(val day: String, val deliveries: Int, val incentive: Double)
+data class IncentiveStatus(
+    val enabled: Boolean,
+    val todayDeliveries: Int = 0,
+    val slabs: List<IncentiveSlab> = emptyList(),
+    val earnedToday: Double = 0.0,
+    val peakToday: Double = 0.0,
+    val dailyToday: Double = 0.0,
+    val currentPeak: IncentivePeak? = null,
+    val nextPeak: IncentivePeak? = null,
+    val week: List<IncentiveDay> = emptyList(),
+    val acceptancePct: Int = 100,
+    val acceptanceOffers: Int = 0,
+    val minAcceptancePct: Int = 0,
+    val minOffers: Int = 0,
+    val acceptanceOk: Boolean = true
+) {
+    companion object {
+        fun from(o: org.json.JSONObject): IncentiveStatus {
+            if (!o.optBoolean("enabled", false)) return IncentiveStatus(false)
+            fun peak(p: org.json.JSONObject?) = p?.let { IncentivePeak(it.optString("name"), it.optDouble("extra", 0.0), if (it.isNull("starts_at")) null else it.optString("starts_at"), if (it.isNull("ends_at")) null else it.optString("ends_at")) }
+            val sl = o.optJSONArray("slabs")
+            val wk = o.optJSONArray("week")
+            val acc = o.optJSONObject("acceptance")
+            return IncentiveStatus(
+                enabled = true,
+                todayDeliveries = o.optInt("today_deliveries"),
+                slabs = if (sl == null) emptyList() else (0 until sl.length()).map { i -> sl.getJSONObject(i).let { IncentiveSlab(it.optInt("min_deliveries"), it.optDouble("bonus", 0.0), it.optBoolean("reached")) } },
+                earnedToday = o.optDouble("earned_today", 0.0), peakToday = o.optDouble("peak_today", 0.0), dailyToday = o.optDouble("daily_today", 0.0),
+                currentPeak = peak(o.optJSONObject("current_peak")), nextPeak = peak(o.optJSONObject("next_peak")),
+                week = if (wk == null) emptyList() else (0 until wk.length()).map { i -> wk.getJSONObject(i).let { IncentiveDay(it.optString("day"), it.optInt("deliveries"), it.optDouble("incentive", 0.0)) } },
+                acceptancePct = acc?.optInt("pct", 100) ?: 100, acceptanceOffers = acc?.optInt("offers", 0) ?: 0,
+                minAcceptancePct = acc?.optInt("min_pct", 0) ?: 0, minOffers = acc?.optInt("min_offers", 0) ?: 0, acceptanceOk = acc?.optBoolean("ok", true) ?: true
+            )
+        }
+    }
+}

@@ -99,6 +99,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private val _incentive = MutableStateFlow<IncentiveStatus?>(null)
+    val incentive: StateFlow<IncentiveStatus?> = _incentive.asStateFlow()
+    fun refreshIncentive() { viewModelScope.launch { repository.getIncentiveStatus().onSuccess { _incentive.value = it.takeIf { s -> s.enabled } } } }
+
     /** Invitation to join as helper: null = nothing to show; else the request status ("none" = never asked). */
     private val _helperInvite = MutableStateFlow<String?>(null)
     val helperInvite: StateFlow<String?> = _helperInvite.asStateFlow()

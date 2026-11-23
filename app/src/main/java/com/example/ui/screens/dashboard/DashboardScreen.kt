@@ -188,6 +188,12 @@ fun DashboardScreen(
         )
     }
 
+    // Today's incentives: a card on the dashboard and a full progress screen
+    val incentive by viewModel.incentive.collectAsState()
+    var showIncentive by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { while (true) { viewModel.refreshIncentive(); kotlinx.coroutines.delay(60_000) } }
+    if (showIncentive) incentive?.let { IncentiveDialog(it, onClose = { showIncentive = false }) }
+
     // Invitation to join as helper (Kannada + English): a popup once a day, and a card on the dashboard
     val helperInvite by viewModel.helperInvite.collectAsState()
     var showInvite by remember { mutableStateOf(false) }
@@ -211,6 +217,7 @@ fun DashboardScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        incentive?.let { inc -> item { IncentiveCard(inc, onOpen = { showIncentive = true }) } }
         helperInvite?.let { st -> item { HelperInviteCard(st, onRequest = { viewModel.requestHelperJoin() }) } }
         cashStatus?.takeIf { it.blocked }?.let { status ->
             item { CashLimitBanner(status) }
