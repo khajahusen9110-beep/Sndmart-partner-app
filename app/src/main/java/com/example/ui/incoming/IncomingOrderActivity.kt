@@ -245,7 +245,7 @@ private fun IncomingOrderScreen(
         modifier = Modifier
             .fillMaxSize()
             .testTag("incoming_order_screen"),
-        color = Color(0xFF0B3D2E)
+        color = if (alert.isHelper) Color(0xFF0B2A6B) else Color(0xFF0B3D2E) // helper bookings: blue; delivery orders: green
     ) {
         Column(
             modifier = Modifier
@@ -259,6 +259,10 @@ private fun IncomingOrderScreen(
             Spacer(Modifier.height(12.dp))
             Icon(if (alert.isHelper) Icons.Default.Handyman else Icons.Default.DeliveryDining, contentDescription = null, tint = Color.White, modifier = Modifier.size(56.dp))
             Spacer(Modifier.height(8.dp))
+            if (alert.isHelper) Surface(shape = RoundedCornerShape(50), color = Color(0xFF3B82F6)) {
+                Text("HELPER BOOKING", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp, letterSpacing = 1.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp))
+            }
+            if (alert.isHelper) Spacer(Modifier.height(8.dp))
             Text(
                 text = alert.title,
                 color = Color.White,
@@ -287,7 +291,7 @@ private fun IncomingOrderScreen(
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     val earning = if (alert.isHelper) alert.totalAmount else alert.deliveryFee
                     if (earning.isNotBlank()) {
-                        Text("Earning ₹$earning", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = EmeraldPrimary)
+                        Text("Earning ₹$earning", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = if (alert.isHelper) Color(0xFF1D4ED8) else EmeraldPrimary)
                     }
                     if (alert.isHelper) {
                         InfoRow(Icons.Default.Handyman, "Service", alert.storeName)
@@ -341,7 +345,7 @@ private fun IncomingOrderScreen(
                     .height(64.dp)
                     .testTag("incoming_accept_button"),
                 shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF22C55E))
+                colors = ButtonDefaults.buttonColors(containerColor = if (alert.isHelper) Color(0xFF3B82F6) else Color(0xFF22C55E))
             ) {
                 if (busy) {
                     CircularProgressIndicator(color = Color.White, modifier = Modifier.size(26.dp))

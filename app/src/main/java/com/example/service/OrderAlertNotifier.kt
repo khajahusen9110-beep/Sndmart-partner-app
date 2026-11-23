@@ -160,6 +160,7 @@ object OrderAlertNotifier {
         }
         val notification = NotificationCompat.Builder(appContext, if (soundOn) CHANNEL_ALARM else CHANNEL_SILENT)
             .setSmallIcon(R.drawable.ic_notification)
+            .setColor(if (alert.isHelper) 0xFF2563EB.toInt() else 0xFF16A34A.toInt()) // helper bookings blue, delivery orders green
             .setContentTitle(alert.title)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))

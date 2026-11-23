@@ -4,6 +4,7 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -116,7 +117,7 @@ fun HelperTab(viewModel: MainViewModel) {
         if (section == 1) {
         if (active.isEmpty() && toCollect.isEmpty()) Text("No work in hand. Accept a request to start.", color = Slate600)
         active.forEach { job ->
-            JobCard(job, busyId == job.id, onPhoto = ::openPhoto) {
+            JobCard(job, busyId == job.id, onPhoto = ::openPhoto, loadLink = { repo.helperPhotoLink(it).getOrNull() }) {
                 when (job.status) {
                     "accepted" -> ActionButton("I am on the way", busyId == job.id) { act(job, "on_the_way", done = "Customer informed") }
                     "on_the_way" -> ActionButton("Start work (enter code)", busyId == job.id) { codeFor = job to "start" }
@@ -153,7 +154,7 @@ fun HelperTab(viewModel: MainViewModel) {
         if (section == 0) {
         if (open.isEmpty()) Text(if (active.isNotEmpty()) "Finish your current booking to get new requests." else if (ui.enabled) "No requests right now. They ring here when a customer books." else "You are not enabled for Quick Helper.", color = Slate600)
         open.forEach { job ->
-            JobCard(job, busyId == job.id, onPhoto = ::openPhoto) {
+            JobCard(job, busyId == job.id, onPhoto = ::openPhoto, loadLink = { repo.helperPhotoLink(it).getOrNull() }) {
                 ActionButton("Accept request", busyId == job.id) {
                     busyId = job.id
                     scope.launch {
@@ -207,7 +208,7 @@ private fun HistoryRow(job: HelperJob) {
 
 
 @Composable
-private fun JobCard(job: HelperJob, busy: Boolean, onPhoto: (String) -> Unit, actions: @Composable ColumnScope.() -> Unit) {
+private fun JobCard(job: HelperJob, busy: Boolean, onPhoto: (String) -> Unit, loadLink: suspend (String) -> String?, actions: @Composable ColumnScope.() -> Unit) {
     Card(
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -227,9 +228,13 @@ private fun JobCard(job: HelperJob, busy: Boolean, onPhoto: (String) -> Unit, ac
             val whenText = job.requestedFor?.let { parseIsoMillis(it) }?.let { "Needed at " + SimpleDateFormat("EEE d MMM, h:mm a", Locale.getDefault()).format(Date(it)) } ?: "Needed as soon as possible"
             Text(whenText, fontSize = 12.sp, color = Slate600)
             Text(listOfNotNull(job.customerName, job.addressLine, job.landmark?.takeIf { it.isNotBlank() }?.let { "Near $it" }).joinToString("\n"), fontSize = 14.sp)
-            if (job.photoPaths.isNotEmpty() && job.status != "requested") {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    job.photoPaths.forEachIndexed { i, p -> OutlinedButton(onClick = { onPhoto(p) }, enabled = !busy) { Text("Photo ${i + 1}") } }
+            if (job.photoPaths.isNotEmpty()) {
+                if (job.status == "requested") Text("${job.photoPaths.size} photo(s) from the customer. You can see them after you accept.", fontSize = 12.sp, color = HBlueDark, fontWeight = FontWeight.SemiBold)
+                else {
+                    Text("Customer's photos", fontSize = 12.sp, color = Slate600, fontWeight = FontWeight.SemiBold)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        job.photoPaths.forEach { p -> HelperPhotoThumb(p, loadLink, onClick = { onPhoto(p) }) }
+                    }
                 }
             }
             if (job.status != "requested") {
@@ -242,6 +247,16 @@ private fun JobCard(job: HelperJob, busy: Boolean, onPhoto: (String) -> Unit, ac
             }
             actions()
         }
+    }
+}
+
+/** The customer's reference photo of the task, shown small; tap to open it big. */
+@Composable
+private fun HelperPhotoThumb(path: String, loadLink: suspend (String) -> String?, onClick: () -> Unit) {
+    val url by produceState<String?>(null, path) { value = loadLink(path) }
+    Box(Modifier.size(88.dp).clip(RoundedCornerShape(12.dp)).background(HBlueSoft).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+        if (url != null) coil.compose.AsyncImage(model = url, contentDescription = "Customer's photo", contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        else CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = HBlue)
     }
 }
 
