@@ -939,9 +939,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return repository.fetchOrderItems(orderId)
     }
 
-    /** Creates a door-step UPI QR so the customer can pay a COD order online. */
-    suspend fun createOrderQr(orderId: String): Result<OrderQrResponse> =
-        repository.createOrderQr(orderId)
+    // The QR of an order is made ahead of time (when the order screen opens) so "Show UPI QR" opens at once.
+    private val qrCache = java.util.concurrent.ConcurrentHashMap<String, OrderQrResponse>()
+
+    fun cachedOrderQr(orderId: String): OrderQrResponse? = qrCache[orderId]?.takeIf { !it.isPaid }
+
+    /** Creates a door-step UPI QR so the customer can pay a COD order online (re-uses the one made ahead of time). */
+    suspend fun createOrderQr(orderId: String): Result<OrderQrResponse> {
+        cachedOrderQr(orderId)?.let { return Result.success(it) }
+        return repository.createOrderQr(orderId).onSuccess { qrCache[orderId] = it }
+    }
+
+    /** Makes the QR in the background and downloads its picture, so nothing waits when the partner taps "Show UPI QR". */
+    fun prefetchOrderQr(orderId: String) {
+        if (orderId.isBlank() || cachedOrderQr(orderId) != null) return
+        viewModelScope.launch {
+            createOrderQr(orderId).onSuccess { qr ->
+                qr.imageUrl?.let { url ->
+                    val ctx = getApplication<Application>()
+                    coil.Coil.imageLoader(ctx).enqueue(coil.request.ImageRequest.Builder(ctx).data(url).build())
+                }
+            }
+        }
+    }
 
     /** Polls whether the order's QR payment has arrived. */
     suspend fun checkOrderQrPaid(orderId: String): Result<Boolean> =

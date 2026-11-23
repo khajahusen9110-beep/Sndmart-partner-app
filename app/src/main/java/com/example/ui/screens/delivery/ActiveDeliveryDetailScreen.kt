@@ -697,6 +697,10 @@ fun ActiveDeliveryDetailScreen(
             if (isCashOnDelivery(assignment.paymentMode) && !alreadyPaid &&
                 currentStatus !in listOf("delivered", "cancelled", "rejected")
             ) {
+                // make the QR now, so it is ready (and its picture downloaded) when the partner taps the button
+                LaunchedEffect(assignment.orderId) {
+                    viewModel.prefetchOrderQr(assignment.orderId.ifBlank { assignment.orders?.id.orEmpty() })
+                }
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(18.dp),
@@ -1447,10 +1451,21 @@ private fun CollectByQrDialog(
 
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
-    var qr by remember { mutableStateOf<OrderQrResponse?>(null) }
+    // already made ahead of time? then there is nothing to wait for
+    var qr by remember { mutableStateOf(viewModel.cachedOrderQr(orderId)) }
     var paid by remember { mutableStateOf(false) }
     var checking by remember { mutableStateOf(false) }
     var attempt by remember { mutableStateOf(0) }
+    var imageReady by remember { mutableStateOf(false) }
+
+    // A bright screen is scanned faster: full brightness while the QR is open
+    val dialogContext = LocalContext.current
+    DisposableEffect(Unit) {
+        val window = (dialogContext as? android.app.Activity)?.window
+        val before = window?.attributes?.screenBrightness
+        window?.let { w -> w.attributes = w.attributes.apply { screenBrightness = 1f } }
+        onDispose { window?.let { w -> w.attributes = w.attributes.apply { screenBrightness = before ?: android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE } } }
+    }
 
     // Create (or re-fetch) the QR; re-runs when the user taps Retry.
     LaunchedEffect(orderId, attempt) {
@@ -1459,6 +1474,7 @@ private fun CollectByQrDialog(
             loading = false
             return@LaunchedEffect
         }
+        if (qr != null) { loading = false; return@LaunchedEffect }
         loading = true
         error = null
         viewModel.createOrderQr(orderId)
@@ -1493,6 +1509,9 @@ private fun CollectByQrDialog(
 
     AlertDialog(
         onDismissRequest = { if (!paid) onDismiss() },
+        // the QR uses the whole width of the screen: bigger squares scan faster and from further away
+        modifier = Modifier.fillMaxWidth(0.97f),
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
         icon = {
             Icon(
                 imageVector = if (paid) Icons.Default.CheckCircle else Icons.Default.QrCode2,
@@ -1539,15 +1558,24 @@ private fun CollectByQrDialog(
                             textAlign = TextAlign.Center
                         )
                         Spacer(Modifier.height(12.dp))
-                        AsyncImage(
-                            model = qr?.imageUrl,
-                            contentDescription = "UPI payment QR",
+                        Box(
                             modifier = Modifier
-                                .size(230.dp)
+                                .fillMaxWidth()
+                                .aspectRatio(1f)
                                 .clip(RoundedCornerShape(12.dp))
-                                .background(Color.White)
-                                .padding(8.dp)
-                        )
+                                .background(Color.White),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            AsyncImage(
+                                model = qr?.imageUrl,
+                                contentDescription = "UPI payment QR",
+                                // hard, square modules stay sharp when the small picture is enlarged
+                                filterQuality = androidx.compose.ui.graphics.FilterQuality.None,
+                                onSuccess = { imageReady = true },
+                                modifier = Modifier.fillMaxSize().padding(10.dp)
+                            )
+                            if (!imageReady) CircularProgressIndicator(color = TealSecondary)
+                        }
                         Spacer(Modifier.height(12.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(
