@@ -129,8 +129,6 @@ data class DeliveryAssignment(
     val estimatedDropDistanceKm: Double = 3.5,
     @Json(name = "pickup_photo_url") val pickupPhotoUrl: String? = null,
     @Json(name = "delivered_photo_url") val deliveredPhotoUrl: String? = null,
-    @Json(name = "batch_id") val batchId: String? = null,
-    val batchCode: String? = null,
     @Json(name = "assigned_at") val assignedAt: String? = null,
     @Json(name = "accepted_at") val acceptedAt: String? = null,
     @Json(name = "picked_up_at") val pickedUpAt: String? = null,
@@ -200,16 +198,6 @@ data class CityDbModel(
     val name: String? = null,
     @Json(name = "center_lat") val centerLat: Double? = null,
     @Json(name = "center_lng") val centerLng: Double? = null
-)
-
-@JsonClass(generateAdapter = true)
-data class DeliveryBatch(
-    val id: String,
-    @Json(name = "batch_code") val batchCode: String,
-    val status: String = "active",
-    @Json(name = "total_orders") val totalOrders: Int = 0,
-    @Json(name = "created_at") val createdAt: String = "",
-    val assignments: List<DeliveryAssignment> = emptyList()
 )
 
 @JsonClass(generateAdapter = true)

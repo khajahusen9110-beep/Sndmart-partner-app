@@ -23,7 +23,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.DeliveryAssignment
-import com.example.data.model.DeliveryBatch
 import com.example.ui.MainViewModel
 import com.example.ui.components.*
 import com.example.ui.theme.*
@@ -36,10 +35,9 @@ fun DeliveriesScreen(
     onOpenAssignmentDetail: (DeliveryAssignment) -> Unit
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Active Tasks", "Batches", "Delivered")
+    val tabs = listOf("Active Tasks", "Delivered")
 
     val assignments by viewModel.assignments.collectAsState()
-    val batches by viewModel.batches.collectAsState()
     val isDataLoading by viewModel.isDataLoading.collectAsState()
     val canLoadMore by viewModel.canLoadMoreDeliveries.collectAsState()
     val isLoadingMore by viewModel.isLoadingMoreDeliveries.collectAsState()
@@ -68,7 +66,6 @@ fun DeliveriesScreen(
             tabs.forEachIndexed { index, title ->
                 val count = when (index) {
                     0 -> activeAssignments.size
-                    1 -> batches.size
                     else -> deliveredAssignments.size
                 }
                 Tab(
@@ -122,29 +119,6 @@ fun DeliveriesScreen(
                 }
 
                 1 -> {
-                    // Multi-order Batches Tab
-                    if (batches.isEmpty()) {
-                        EmptyDeliveriesState(
-                            title = "No Multi-Order Batches",
-                            subtitle = "When the system groups nearby pickups into a single multi-drop route, batches appear here.",
-                            onRefresh = null
-                        )
-                    } else {
-                        LazyColumn(
-                            contentPadding = PaddingValues(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            items(batches) { batch ->
-                                BatchDetailCard(
-                                    batch = batch,
-                                    onSelectAssignment = onOpenAssignmentDetail
-                                )
-                            }
-                        }
-                    }
-                }
-
-                2 -> {
                     // Delivered History Tab
                     if (deliveredAssignments.isEmpty()) {
                         EmptyDeliveriesState(
@@ -314,69 +288,6 @@ fun ActiveDeliveryCard(
     }
 }
 
-@Composable
-fun BatchDetailCard(
-    batch: DeliveryBatch,
-    onSelectAssignment: (DeliveryAssignment) -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Layers, contentDescription = null, tint = TealSecondary)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(text = batch.batchCode, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
-                }
-                StatusPill(text = batch.status, statusColor = TealSecondary, bgColor = TealContainer)
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Text(
-                text = "${batch.totalOrders} Orders in this Batch Route:",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            batch.assignments.forEachIndexed { idx, item ->
-                Surface(
-                    onClick = { onSelectAssignment(item) },
-                    shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "${idx + 1}. ${item.orderNumber} • ${item.customerName}", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
-                            Text(text = item.customerAddress, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        DeliveryStatusBadge(status = item.status)
-                    }
-                }
-            }
-        }
-    }
-}
 
 @Composable
 fun DeliveredHistoryCard(

@@ -39,7 +39,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.core.app.ActivityCompat
 import com.example.data.location.LocationTracker
 import com.example.data.model.DeliveryAssignment
-import com.example.data.model.DeliveryBatch
 import com.example.data.model.DeliveryPartner
 import com.example.ui.MainViewModel
 import com.example.ui.components.*
@@ -58,7 +57,6 @@ fun DashboardScreen(
     val isOnline = partner.isOnline
     val isAvailable = partner.isAvailable
     val activeAssignments by viewModel.activeAssignments.collectAsState()
-    val batches by viewModel.batches.collectAsState()
     val earningsSummary by viewModel.todayEarningsSummary.collectAsState()
     val cashInHand by viewModel.cashInHandBalance.collectAsState()
     val isGpsActive by viewModel.isTrackingLocation.collectAsState()
@@ -465,22 +463,6 @@ fun DashboardScreen(
             }
         }
 
-        // Multi-order Batches Section
-        val activeBatches = batches.filter { it.status == "active" }
-        if (activeBatches.isNotEmpty()) {
-            item {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "Delivery Batches (${activeBatches.size})",
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                )
-            }
-
-            items(activeBatches) { batch ->
-                BatchCard(batch = batch, onClick = onNavigateToDeliveries)
-            }
-        }
-
         // Live Telemetry / GPS Quick Card
         item {
             Card(
@@ -618,54 +600,6 @@ fun ActiveAssignmentCard(
     }
 }
 
-@Composable
-fun BatchCard(
-    batch: DeliveryBatch,
-    onClick: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() },
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = TealContainer.copy(alpha = 0.4f))
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.Layers,
-                    contentDescription = "Batch",
-                    tint = TealSecondary,
-                    modifier = Modifier.size(24.dp)
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                    Text(
-                        text = "Batch: ${batch.batchCode}",
-                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-                    )
-                    Text(
-                        text = "${batch.totalOrders} Combined Drop Orders",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TealOnContainer
-                    )
-                }
-            }
-
-            StatusPill(
-                text = batch.status,
-                statusColor = TealSecondary,
-                bgColor = TealContainer
-            )
-        }
-    }
-}
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this

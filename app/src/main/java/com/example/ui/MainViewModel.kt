@@ -207,20 +207,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         list.filter { it.status in listOf("accepted", "arrived_pickup", "picked_up", "out_for_delivery", "arrived_drop") }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val batches = assignments.map { list ->
-        list.groupBy { it.batchId ?: it.id }.map { (batchId, batchAssignments) ->
-            val first = batchAssignments.first()
-            DeliveryBatch(
-                id = batchId,
-                batchCode = first.batchCode ?: "BATCH-${first.orderNumber.takeLast(4)}",
-                status = if (batchAssignments.all { it.status == "delivered" }) "completed" else "active",
-                totalOrders = batchAssignments.size,
-                createdAt = first.createdAt,
-                assignments = batchAssignments
-            )
-        }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
     /** (today's net earnings, today's deliveries, today's pending earnings) */
     val todayEarningsSummary = earnings.map { list ->
         val summary = todayEarnings(list)
