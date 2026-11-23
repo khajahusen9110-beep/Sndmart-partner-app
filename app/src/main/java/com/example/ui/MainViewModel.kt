@@ -58,6 +58,101 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val isFcmOnline: StateFlow<Boolean> = _isFcmOnline.asStateFlow()
 
     val currentPartner = repository.currentPartner
+
+    // ---------- Quick Helper (its own tab: requests, running work, history) ----------
+    data class HelperUi(
+        val loaded: Boolean = false,
+        val enabled: Boolean = false,
+        val hasBookings: Boolean = false,
+        val requests: List<HelperJob> = emptyList(),
+        val bookings: List<HelperJob> = emptyList(),
+        val summary: HelperSummaryDto? = null,
+        val rating: Double? = null,
+        val ratings: Int = 0
+    ) {
+        /** The Helper tab shows for helpers, and for anyone who still has helper bookings. */
+        val showTab get() = enabled || hasBookings
+        val active get() = bookings.filter { it.status in setOf("accepted", "on_the_way", "started") }
+        val toCollect get() = bookings.filter { it.status == "completed" && !it.paymentCollected }
+        /** What the tab badge counts: requests waiting for an answer, a running job, an extra-time request. */
+        val badge get() = (if (active.isEmpty()) requests.size else 0) + active.size + active.count { it.pendingExtension != null } + toCollect.size
+    }
+
+    private val _helperUi = MutableStateFlow(HelperUi())
+    val helperUi: StateFlow<HelperUi> = _helperUi.asStateFlow()
+    private var helperJob: kotlinx.coroutines.Job? = null
+    private val ringedHelperIds = mutableSetOf<String>()
+
+    /** Counter the screen listens to: every change asks it to open the Helper tab. */
+    private val _openHelperTab = MutableStateFlow(0)
+    val openHelperTab: StateFlow<Int> = _openHelperTab.asStateFlow()
+    fun openHelperTab() { _openHelperTab.value += 1 }
+
+    /** Looks at helper requests and bookings now and then (faster while the app is on screen). */
+    fun startHelperWatcher() {
+        helperJob?.cancel()
+        helperJob = viewModelScope.launch {
+            while (true) {
+                refreshHelperNow()
+                delay(if (com.example.MainActivity.isVisible) 10_000L else 30_000L)
+            }
+        }
+    }
+
+    fun refreshHelper() { viewModelScope.launch { refreshHelperNow() } }
+
+    private suspend fun refreshHelperNow() {
+        val status = repository.getHelperStatus().getOrNull() ?: return
+        if (!status.enabled && !status.hasBookings) {
+            _helperUi.value = HelperUi(loaded = true)
+            return
+        }
+        val requests = if (status.enabled) repository.getHelperRequests().getOrNull() else emptyList()
+        val bookings = repository.getHelperBookings().getOrNull()
+        val summary = repository.getHelperSummary().getOrNull()
+        val prev = _helperUi.value
+        _helperUi.value = HelperUi(
+            loaded = true, enabled = status.enabled, hasBookings = status.hasBookings,
+            requests = requests ?: prev.requests, bookings = bookings ?: prev.bookings, summary = summary ?: prev.summary,
+            rating = status.avgRating, ratings = status.totalRatings
+        )
+        val ui = _helperUi.value
+        // A request taken by someone else, cancelled or expired stops ringing here too.
+        val openIds = ui.requests.map { it.id }.toSet()
+        ringedHelperIds.filter { it !in openIds }.forEach { OrderAlertNotifier.cancel(getApplication(), it) }
+        ringedHelperIds.retainAll(openIds)
+        // A request the push missed (or arrived while the app was open) rings like a new order.
+        // Only a fresh one, only for a partner who is online and not busy with another booking.
+        val online = (_authUiState.value as? AuthUiState.Authenticated)?.partner?.isOnline == true
+        if (status.enabled && online && ui.active.isEmpty()) {
+            val now = System.currentTimeMillis()
+            ui.requests.forEach { job ->
+                val age = com.example.util.parseIsoMillis(job.createdAt)?.let { now - it } ?: Long.MAX_VALUE
+                if (job.id !in ringedHelperIds && age < 2 * 60_000L) {
+                    ringedHelperIds += job.id
+                    OrderAlertNotifier.show(
+                        getApplication(),
+                        OrderAlert(
+                            assignmentId = job.id, title = "New Helper Request",
+                            body = job.taskDescription, storeName = "${job.taskType} · ${job.durationMinutes} min",
+                            customerAddress = job.addressLine, paymentMode = job.paymentMethod,
+                            totalAmount = job.helperAmount.toInt().toString(), expiresAtIso = null, kind = OrderAlert.KIND_HELPER
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    /** Accepts a helper request from the notification, then opens the Helper tab. */
+    fun acceptHelper(bookingId: String) {
+        viewModelScope.launch {
+            repository.acceptHelperRequest(bookingId)
+                .onSuccess { OrderAlertNotifier.cancel(getApplication(), bookingId); showMessage("Booking accepted. Go to the customer."); openHelperTab() }
+                .onFailure { OrderAlertNotifier.cancel(getApplication(), bookingId); showMessage(it.message ?: "Could not accept") }
+            refreshHelperNow()
+        }
+    }
     val assignments = repository.assignments
     val incomingAssignmentAlert = repository.incomingAssignmentAlert
     val earnings = repository.earnings
@@ -390,6 +485,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 repository.startRealtimeWatcher()
                 loadAllBackendData()
+                startHelperWatcher()
             }
         }
     }
@@ -1211,6 +1307,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun endSession(message: String) {
+        helperJob?.cancel()
+        _helperUi.value = HelperUi()
+        ringedHelperIds.clear()
         OrderAlertNotifier.cancelAll(getApplication())
         locationTracker.stopTracking()
         repository.clearData()

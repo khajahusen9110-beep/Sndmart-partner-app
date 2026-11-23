@@ -34,8 +34,12 @@ data class OrderAlert(
     val paymentMode: String = "",
     val totalAmount: String = "",
     val deliveryFee: String = "",
-    val expiresAtIso: String? = null
+    val expiresAtIso: String? = null,
+    /** "delivery" (a delivery offer) or "helper" (a Quick Helper booking request: assignmentId then holds the booking id). */
+    val kind: String = KIND_DELIVERY
 ) {
+    val isHelper get() = kind == KIND_HELPER
+
     /** When the offer ends; falls back to [DEFAULT_WINDOW_MS] if the server sent no expiry. */
     /** Expiry on the server's clock; compare with [ServerClock.now]. */
     fun expiresAtMillis(now: Long = ServerClock.now()): Long =
@@ -43,6 +47,8 @@ data class OrderAlert(
 
     companion object {
         const val DEFAULT_WINDOW_MS = 60_000L
+        const val KIND_DELIVERY = "delivery"
+        const val KIND_HELPER = "helper"
     }
 }
 
@@ -132,7 +138,7 @@ object OrderAlertNotifier {
             appContext,
             nid + 1,
             Intent(appContext, MainActivity::class.java).apply {
-                action = MainActivity.ACTION_ACCEPT_ORDER
+                action = if (alert.isHelper) MainActivity.ACTION_ACCEPT_HELPER else MainActivity.ACTION_ACCEPT_ORDER
                 putExtra(MainActivity.EXTRA_ASSIGNMENT_ID, alert.assignmentId)
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             },
@@ -144,12 +150,13 @@ object OrderAlertNotifier {
             Intent(appContext, OrderActionReceiver::class.java).apply {
                 action = OrderActionReceiver.ACTION_DECLINE
                 putExtra(OrderActionReceiver.EXTRA_ASSIGNMENT_ID, alert.assignmentId)
+                putExtra(OrderActionReceiver.EXTRA_KIND, alert.kind)
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
         val text = alert.body.ifBlank {
-            listOf(alert.storeName, alert.customerAddress).filter { it.isNotBlank() }.joinToString(" → ")
+            listOf(alert.storeName, alert.customerAddress).filter { it.isNotBlank() }.joinToString(if (alert.isHelper) " · " else " → ")
         }
         val notification = NotificationCompat.Builder(appContext, if (soundOn) CHANNEL_ALARM else CHANNEL_SILENT)
             .setSmallIcon(R.drawable.ic_notification)

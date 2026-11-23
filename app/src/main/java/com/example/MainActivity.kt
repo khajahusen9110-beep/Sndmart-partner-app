@@ -42,6 +42,7 @@ import com.example.ui.components.AppPermissionGateScreen
 import com.example.ui.components.rememberMissingGoOnlineRequirements
 import com.example.ui.screens.auth.AuthScreen
 import com.example.ui.screens.dashboard.DashboardScreen
+import com.example.ui.screens.dashboard.HelperTab
 import com.example.ui.screens.delivery.ActiveDeliveryDetailScreen
 import com.example.ui.screens.delivery.DeliveriesScreen
 import com.example.ui.screens.earnings.EarningsScreen
@@ -56,6 +57,7 @@ import com.example.ui.theme.MyApplicationTheme
 enum class MainNavigationTab(val title: String, val icon: ImageVector) {
     DASHBOARD("Dashboard", Icons.Default.Dashboard),
     DELIVERIES("Orders", Icons.Default.TwoWheeler),
+    HELPER("Helper", Icons.Default.Handyman),
     EARNINGS("Earnings", Icons.Default.AccountBalanceWallet),
     PROFILE("Profile", Icons.Default.Person)
 }
@@ -159,6 +161,17 @@ class MainActivity : ComponentActivity() {
             if (id.isNotBlank()) viewModel.respondToAssignment(id, accept = true)
             return
         }
+        if (intent?.action == ACTION_ACCEPT_HELPER) {
+            val id = intent.getStringExtra(EXTRA_ASSIGNMENT_ID).orEmpty()
+            intent.action = null
+            if (id.isNotBlank()) viewModel.acceptHelper(id)
+            return
+        }
+        if (intent?.getBooleanExtra(EXTRA_OPEN_HELPER, false) == true) {
+            intent.removeExtra(EXTRA_OPEN_HELPER)
+            viewModel.openHelperTab()
+            return
+        }
         val assignmentId = intent?.getStringExtra("assignment_id")
             ?: intent?.getStringExtra("assignmentId")
             ?: intent?.getStringExtra("EXTRA_NAVIGATE_ASSIGNMENT_ID")
@@ -173,6 +186,10 @@ class MainActivity : ComponentActivity() {
         /** "Accept" on the new-order notification. */
         const val ACTION_ACCEPT_ORDER = "com.sndmart.delivery.action.ACCEPT_ORDER"
         const val EXTRA_ASSIGNMENT_ID = "accept_assignment_id"
+
+        /** "Accept" on a Quick Helper request notification, and the extra that opens the Helper tab. */
+        const val ACTION_ACCEPT_HELPER = "com.sndmart.delivery.action.ACCEPT_HELPER"
+        const val EXTRA_OPEN_HELPER = "open_helper_tab"
 
         /** True while the app is on screen; a new offer then opens full screen directly. */
         @Volatile
@@ -211,6 +228,12 @@ fun MainAppRoot(viewModel: MainViewModel, onUpdateApp: () -> Unit = {}) {
     val snackbarHostState = remember { SnackbarHostState() }
     var showNotificationsSheet by remember { mutableStateOf(false) }
     var currentTab by remember { mutableStateOf(MainNavigationTab.DASHBOARD) }
+    val helperUi by viewModel.helperUi.collectAsState()
+    val openHelperCount by viewModel.openHelperTab.collectAsState()
+    // an accepted request or a helper notification opens the Helper tab
+    LaunchedEffect(openHelperCount) { if (openHelperCount > 0) currentTab = MainNavigationTab.HELPER }
+    // the tab disappears when the partner is not a helper (any more)
+    LaunchedEffect(helperUi.showTab, helperUi.loaded) { if (helperUi.loaded && !helperUi.showTab && currentTab == MainNavigationTab.HELPER) currentTab = MainNavigationTab.DASHBOARD }
 
     val context = LocalContext.current
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -360,6 +383,7 @@ fun MainAppRoot(viewModel: MainViewModel, onUpdateApp: () -> Unit = {}) {
                                 title = when (currentTab) {
                                     MainNavigationTab.DASHBOARD -> "Sndmart Partner"
                                     MainNavigationTab.DELIVERIES -> "Deliveries"
+                                    MainNavigationTab.HELPER -> "Quick Helper"
                                     MainNavigationTab.EARNINGS -> "Earnings & Payouts"
                                     MainNavigationTab.PROFILE -> "My Profile"
                                 },
@@ -379,16 +403,22 @@ fun MainAppRoot(viewModel: MainViewModel, onUpdateApp: () -> Unit = {}) {
                                 containerColor = MaterialTheme.colorScheme.surface,
                                 tonalElevation = 6.dp
                             ) {
-                                MainNavigationTab.values().forEach { tab ->
+                                MainNavigationTab.values().filter { it != MainNavigationTab.HELPER || helperUi.showTab }.forEach { tab ->
                                     val isSelected = currentTab == tab
                                     NavigationBarItem(
                                         selected = isSelected,
                                         onClick = { currentTab = tab },
                                         icon = {
-                                            Icon(
-                                                imageVector = tab.icon,
-                                                contentDescription = tab.title
-                                            )
+                                            if (tab == MainNavigationTab.HELPER && helperUi.badge > 0) {
+                                                BadgedBox(badge = { Badge { Text("${helperUi.badge}") } }) {
+                                                    Icon(imageVector = tab.icon, contentDescription = tab.title)
+                                                }
+                                            } else {
+                                                Icon(
+                                                    imageVector = tab.icon,
+                                                    contentDescription = tab.title
+                                                )
+                                            }
                                         },
                                         label = {
                                             Text(
@@ -493,6 +523,10 @@ fun MainAppRoot(viewModel: MainViewModel, onUpdateApp: () -> Unit = {}) {
                                                 viewModel.selectAssignmentForDetail(assignment)
                                             }
                                         )
+                                    }
+
+                                    MainNavigationTab.HELPER -> {
+                                        HelperTab(viewModel = viewModel)
                                     }
 
                                     MainNavigationTab.EARNINGS -> {

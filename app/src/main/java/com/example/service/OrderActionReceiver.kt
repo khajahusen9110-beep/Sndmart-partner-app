@@ -20,6 +20,8 @@ class OrderActionReceiver : BroadcastReceiver() {
 
         // Stop the ringing immediately; the server call can take a moment.
         OrderAlertNotifier.cancel(context, assignmentId)
+        // A Quick Helper request is open to every helper nearby: "Decline" only silences it on this phone.
+        if (intent.getStringExtra(EXTRA_KIND) == OrderAlert.KIND_HELPER) return
 
         val pending = goAsync()
         scope.launch {
@@ -37,6 +39,7 @@ class OrderActionReceiver : BroadcastReceiver() {
         private const val TAG = "OrderActionReceiver"
         const val ACTION_DECLINE = "com.sndmart.delivery.action.DECLINE_ORDER"
         const val EXTRA_ASSIGNMENT_ID = "assignment_id"
+        const val EXTRA_KIND = "alert_kind"
         private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     }
 }

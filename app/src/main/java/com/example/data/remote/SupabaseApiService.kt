@@ -333,6 +333,20 @@ interface SupabaseApiService {
     ): Response<ResponseBody>
 
     // Quick Helper
+    @POST("rest/v1/rpc/helper_partner_status")
+    suspend fun rpcHelperStatus(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Body params: Map<String, String>
+    ): Response<HelperStatusDto>
+
+    @POST("rest/v1/rpc/helper_partner_summary")
+    suspend fun rpcHelperSummary(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Body params: Map<String, String>
+    ): Response<HelperSummaryDto>
+
     @POST("rest/v1/rpc/helper_partner_requests")
     suspend fun rpcHelperRequests(
         @Header("apikey") apiKey: String,

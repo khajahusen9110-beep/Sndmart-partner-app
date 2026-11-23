@@ -16,6 +16,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeliveryDining
+import androidx.compose.material.icons.filled.Handyman
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material3.*
@@ -112,9 +113,10 @@ class IncomingOrderActivity : ComponentActivity() {
         busy = true
         error = null
         if (!accept) OrderAlertNotifier.cancel(this, a.assignmentId)
+        if (a.isHelper && !accept) { finish(); return } // a helper request is open to others: declining only closes it here
         lifecycleScope.launch {
-            val result = SupabaseRepository.getInstance(this@IncomingOrderActivity)
-                .respondToAssignment(a.assignmentId, accept)
+            val repo = SupabaseRepository.getInstance(this@IncomingOrderActivity)
+            val result = if (a.isHelper) repo.acceptHelperRequest(a.assignmentId) else repo.respondToAssignment(a.assignmentId, accept)
             busy = false
             result.onSuccess {
                 OrderAlertNotifier.cancel(this@IncomingOrderActivity, a.assignmentId)
@@ -126,7 +128,8 @@ class IncomingOrderActivity : ComponentActivity() {
                     }
                     startActivity(
                         Intent(this@IncomingOrderActivity, MainActivity::class.java).apply {
-                            putExtra("EXTRA_NAVIGATE_ASSIGNMENT_ID", a.assignmentId)
+                            if (a.isHelper) putExtra(MainActivity.EXTRA_OPEN_HELPER, true)
+                            else putExtra("EXTRA_NAVIGATE_ASSIGNMENT_ID", a.assignmentId)
                             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
                         }
                     )
@@ -142,6 +145,7 @@ class IncomingOrderActivity : ComponentActivity() {
 
     private fun onTimeout(a: OrderAlert) {
         OrderAlertNotifier.cancel(this, a.assignmentId)
+        if (a.isHelper) { finish(); return } // nothing to decline: the request stays open in the Helper tab
         // Same as the in-app offer card: an unanswered offer is declined so it is reassigned.
         // Runs outside lifecycleScope because the screen closes right away.
         backgroundScope.launch {
@@ -161,6 +165,7 @@ class IncomingOrderActivity : ComponentActivity() {
         private const val EXTRA_TOTAL = "alert_total_amount"
         private const val EXTRA_FEE = "alert_delivery_fee"
         private const val EXTRA_EXPIRES = "alert_expires_at"
+        private const val EXTRA_KIND = "alert_kind"
 
         @Volatile
         private var current: WeakReference<IncomingOrderActivity>? = null
@@ -181,6 +186,7 @@ class IncomingOrderActivity : ComponentActivity() {
                 putExtra(EXTRA_TOTAL, alert.totalAmount)
                 putExtra(EXTRA_FEE, alert.deliveryFee)
                 putExtra(EXTRA_EXPIRES, alert.expiresAtIso)
+                putExtra(EXTRA_KIND, alert.kind)
             }
 
         private fun readAlert(intent: Intent?): OrderAlert? {
@@ -196,7 +202,8 @@ class IncomingOrderActivity : ComponentActivity() {
                 paymentMode = intent?.getStringExtra(EXTRA_PAYMENT).orEmpty(),
                 totalAmount = intent?.getStringExtra(EXTRA_TOTAL).orEmpty(),
                 deliveryFee = intent?.getStringExtra(EXTRA_FEE).orEmpty(),
-                expiresAtIso = intent?.getStringExtra(EXTRA_EXPIRES)
+                expiresAtIso = intent?.getStringExtra(EXTRA_EXPIRES),
+                kind = intent?.getStringExtra(EXTRA_KIND) ?: OrderAlert.KIND_DELIVERY
             )
         }
 
@@ -250,7 +257,7 @@ private fun IncomingOrderScreen(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Spacer(Modifier.height(12.dp))
-            Icon(Icons.Default.DeliveryDining, contentDescription = null, tint = Color.White, modifier = Modifier.size(56.dp))
+            Icon(if (alert.isHelper) Icons.Default.Handyman else Icons.Default.DeliveryDining, contentDescription = null, tint = Color.White, modifier = Modifier.size(56.dp))
             Spacer(Modifier.height(8.dp))
             Text(
                 text = alert.title,
@@ -278,9 +285,24 @@ private fun IncomingOrderScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (alert.deliveryFee.isNotBlank()) {
-                        Text("Earning ₹${alert.deliveryFee}", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = EmeraldPrimary)
+                    val earning = if (alert.isHelper) alert.totalAmount else alert.deliveryFee
+                    if (earning.isNotBlank()) {
+                        Text("Earning ₹$earning", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = EmeraldPrimary)
                     }
+                    if (alert.isHelper) {
+                        InfoRow(Icons.Default.Handyman, "Service", alert.storeName)
+                        InfoRow(Icons.Default.LocationOn, "Where", alert.customerAddress)
+                        if (alert.body.isNotBlank()) Text(alert.body.substringAfter(": ", alert.body), color = Color(0xFF334155))
+                        val upi = alert.paymentMode.equals("upi", ignoreCase = true)
+                        Surface(shape = RoundedCornerShape(10.dp), color = if (upi) Color(0xFFD1FAE5) else Color(0xFFFEF3C7)) {
+                            Text(
+                                text = if (upi) "PAID ONLINE • collect nothing" else "CASH BOOKING • collect from customer",
+                                fontWeight = FontWeight.Bold,
+                                color = if (upi) Color(0xFF065F46) else Color(0xFF92400E),
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
+                    } else {
                     InfoRow(Icons.Default.Storefront, "Pickup", listOf(alert.storeName, alert.storeAddress).filter { it.isNotBlank() }.joinToString("\n"))
                     InfoRow(Icons.Default.LocationOn, "Drop", alert.customerAddress)
                     if (alert.totalAmount.isNotBlank()) {
@@ -299,6 +321,7 @@ private fun IncomingOrderScreen(
                     }
                     if (alert.body.isNotBlank() && alert.storeName.isBlank()) {
                         Text(alert.body, color = Color(0xFF334155))
+                    }
                     }
                 }
             }
@@ -323,7 +346,7 @@ private fun IncomingOrderScreen(
                 if (busy) {
                     CircularProgressIndicator(color = Color.White, modifier = Modifier.size(26.dp))
                 } else {
-                    Text("ACCEPT ORDER", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+                    Text(if (alert.isHelper) "ACCEPT BOOKING" else "ACCEPT ORDER", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
                 }
             }
             Spacer(Modifier.height(12.dp))

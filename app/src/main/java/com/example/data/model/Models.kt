@@ -483,5 +483,24 @@ data class HelperJob(
     @Json(name = "started_at") val startedAt: String? = null,
     @Json(name = "ends_at") val endsAt: String? = null,
     @Json(name = "expires_at") val expiresAt: String? = null,
+    @Json(name = "created_at") val createdAt: String? = null,
     @Json(name = "pending_extension") val pendingExtension: HelperExtensionAsk? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class HelperStatusDto(
+    val enabled: Boolean = false,
+    @Json(name = "has_bookings") val hasBookings: Boolean = false,
+    @Json(name = "avg_rating") val avgRating: Double? = null,
+    @Json(name = "total_ratings") val totalRatings: Int = 0
+)
+
+@JsonClass(generateAdapter = true)
+data class HelperSummaryDto(
+    @Json(name = "today_jobs") val todayJobs: Int = 0,
+    @Json(name = "today_earned") val todayEarned: Double = 0.0,
+    @Json(name = "total_jobs") val totalJobs: Int = 0,
+    @Json(name = "total_earned") val totalEarned: Double = 0.0,
+    @Json(name = "to_receive") val toReceive: Double = 0.0,
+    @Json(name = "to_pay") val toPay: Double = 0.0
 )

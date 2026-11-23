@@ -1308,6 +1308,31 @@ class SupabaseRepository(
 
     // ---------- Quick Helper ----------
 
+    /** Is this partner a helper (the Helper tab shows only then, or when helper bookings exist). */
+    suspend fun getHelperStatus(): Result<HelperStatusDto> = withContext(Dispatchers.IO) {
+        try {
+            ensureValidSession()
+            val response = apiService.rpcHelperStatus(prefs.customSupabaseKey, bearer(), emptyMap())
+            val body = response.body()
+            if (response.isSuccessful && body != null) Result.success(body)
+            else Result.failure(Exception(errorMessage(response, "Could not load helper status")))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun getHelperSummary(): Result<HelperSummaryDto> = withContext(Dispatchers.IO) {
+        try {
+            ensureValidSession()
+            val response = apiService.rpcHelperSummary(prefs.customSupabaseKey, bearer(), emptyMap())
+            val body = response.body()
+            if (response.isSuccessful && body != null) Result.success(body)
+            else Result.failure(Exception(errorMessage(response, "Could not load helper summary")))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     /** Open requests near this helper (empty unless the City Admin made this partner a helper). */
     suspend fun getHelperRequests(): Result<List<HelperJob>> = withContext(Dispatchers.IO) {
         try {

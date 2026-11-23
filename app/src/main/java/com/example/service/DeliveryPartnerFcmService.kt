@@ -10,6 +10,7 @@ import com.example.R
 import com.example.data.local.AppPreferences
 import com.example.data.remote.SupabaseRepository
 import com.example.util.NotificationVisuals
+import com.example.util.helperRequestBookingId
 import com.example.util.newOfferAssignmentId
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
@@ -31,8 +32,30 @@ open class DeliveryPartnerFcmService : FirebaseMessagingService() {
         val body = data["message"] ?: data["body"] ?: message.notification?.body ?: ""
         val repo = SupabaseRepository.getInstance(applicationContext)
 
+        // A Quick Helper booking request rings like an order. It is answered in the Helper tab.
+        val helperId = helperRequestBookingId(data)
+        if (helperId.isNotBlank()) {
+            OrderAlertNotifier.show(
+                applicationContext,
+                OrderAlert(
+                    assignmentId = helperId,
+                    title = title.ifBlank { "New Helper Request" },
+                    body = body,
+                    storeName = data["store_name"].orEmpty(),
+                    customerAddress = data["customer_address"].orEmpty(),
+                    paymentMode = data["payment_mode"].orEmpty(),
+                    totalAmount = data["total_amount"].orEmpty(),
+                    // the booking may stay open for many minutes; the ringing lasts one minute
+                    expiresAtIso = null,
+                    kind = OrderAlert.KIND_HELPER
+                )
+            )
+            repo.addNotification(title, body, "order")
+            return
+        }
+
         if (assignmentId.isBlank()) {
-            showInfoNotification(title, body, data["image_url"])
+            showInfoNotification(title, body, data["image_url"], opensHelper = data["type"].orEmpty().startsWith("helper_"))
             repo.addNotification(title, body, "info")
             return
         }
@@ -72,8 +95,9 @@ open class DeliveryPartnerFcmService : FirebaseMessagingService() {
         }
     }
 
-    private fun showInfoNotification(title: String, body: String, imageUrl: String?) {
+    private fun showInfoNotification(title: String, body: String, imageUrl: String?, opensHelper: Boolean = false) {
         val intent = Intent(this, MainActivity::class.java).apply {
+            if (opensHelper) putExtra(MainActivity.EXTRA_OPEN_HELPER, true)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val notifyId = (title + body).hashCode()

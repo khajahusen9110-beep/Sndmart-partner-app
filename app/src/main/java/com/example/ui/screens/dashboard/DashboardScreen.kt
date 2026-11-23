@@ -192,8 +192,6 @@ fun DashboardScreen(
             item { CashLimitBanner(status) }
         }
 
-        item { HelperSection(viewModel) }
-
         if (autoOfflineNotice && !isOnline) {
             item {
                 AutoOfflineBanner(

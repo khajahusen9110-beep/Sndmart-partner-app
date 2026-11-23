@@ -5,6 +5,8 @@ import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
@@ -30,34 +32,30 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Quick Helper work: short bookings (30 / 60 / 90 min). A helper sees open requests nearby, accepts one, goes to the
- * customer, starts the work with the customer's start code and ends it with the end code, then marks the cash/UPI as
- * received. Shows nothing for partners who are not helpers and have no bookings.
+ * The Helper tab: Quick Helper bookings, kept apart from delivery orders. Requests nearby (they also ring like an order),
+ * the work in hand (on the way, start code, end code, extra time), the cash still to collect, and the history.
  */
 @Composable
-fun HelperSection(viewModel: MainViewModel) {
+fun HelperTab(viewModel: MainViewModel) {
     val repo = viewModel.repository
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    var requests by remember { mutableStateOf<List<HelperJob>>(emptyList()) }
-    var mine by remember { mutableStateOf<List<HelperJob>>(emptyList()) }
+    val ui by viewModel.helperUi.collectAsState()
+    val requests = ui.requests
+    val mine = ui.bookings
     var busyId by remember { mutableStateOf<String?>(null) }
-    var tick by remember { mutableIntStateOf(0) }
     var codeFor by remember { mutableStateOf<Pair<HelperJob, String>?>(null) } // job + action (start / complete)
+    var section by remember { mutableIntStateOf(0) } // 0 requests, 1 my work, 2 history
+    val tick = { viewModel.refreshHelper() }
 
-    LaunchedEffect(tick) {
-        while (true) {
-            repo.getHelperRequests().onSuccess { requests = it }
-            repo.getHelperBookings().onSuccess { mine = it }
-            delay(15_000)
-        }
-    }
-
-    val active = mine.filter { it.status in setOf("accepted", "on_the_way", "started") }
-    val toCollect = mine.filter { it.status == "completed" && !it.paymentCollected }
+    val active = ui.active
+    val toCollect = ui.toCollect
+    val history = mine.filter { it.status !in setOf("accepted", "on_the_way", "started") && !(it.status == "completed" && !it.paymentCollected) }
     // while a booking is in hand, new requests wait
     val open = if (active.isEmpty()) requests else emptyList()
-    if (active.isEmpty() && open.isEmpty() && toCollect.isEmpty()) return
+
+    // a request accepted from the alert, or work that started, brings the customer straight to "My work"
+    LaunchedEffect(active.isNotEmpty()) { if (active.isNotEmpty()) section = 1 }
 
     fun act(job: HelperJob, action: String, code: String? = null, done: String) {
         busyId = job.id
@@ -66,7 +64,7 @@ fun HelperSection(viewModel: MainViewModel) {
                 .onSuccess { viewModel.showMessage(done) }
                 .onFailure { viewModel.showMessage(it.message ?: "Could not update") }
             busyId = null
-            tick++
+            tick()
         }
     }
 
@@ -75,7 +73,7 @@ fun HelperSection(viewModel: MainViewModel) {
             repo.respondHelperExtension(extId, accept)
                 .onSuccess { viewModel.showMessage(if (accept) "Time added" else "Declined") }
                 .onFailure { viewModel.showMessage(it.message ?: "Could not answer") }
-            tick++
+            tick()
         }
     }
 
@@ -100,9 +98,19 @@ fun HelperSection(viewModel: MainViewModel) {
         )
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Quick Helper", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        SummaryRow(ui)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = section == 0, onClick = { section = 0 }, label = { Text("Requests (${open.size})") })
+            FilterChip(selected = section == 1, onClick = { section = 1 }, label = { Text("My work (${active.size + toCollect.size})") })
+            FilterChip(selected = section == 2, onClick = { section = 2 }, label = { Text("History") })
+        }
 
+        if (section == 1) {
+        if (active.isEmpty() && toCollect.isEmpty()) Text("No work in hand. Accept a request to start.", color = Slate600)
         active.forEach { job ->
             JobCard(job, busyId == job.id, onPhoto = ::openPhoto) {
                 when (job.status) {
@@ -136,6 +144,10 @@ fun HelperSection(viewModel: MainViewModel) {
             }
         }
 
+        }
+
+        if (section == 0) {
+        if (open.isEmpty()) Text(if (active.isNotEmpty()) "Finish your current booking to get new requests." else if (ui.enabled) "No requests right now. They ring here when a customer books." else "You are not enabled for Quick Helper.", color = Slate600)
         open.forEach { job ->
             JobCard(job, busyId == job.id, onPhoto = ::openPhoto) {
                 ActionButton("Accept request", busyId == job.id) {
@@ -145,13 +157,50 @@ fun HelperSection(viewModel: MainViewModel) {
                             .onSuccess { viewModel.showMessage("Accepted. Go to the customer.") }
                             .onFailure { viewModel.showMessage(it.message ?: "Could not accept") }
                         busyId = null
-                        tick++
+                        tick()
                     }
                 }
             }
         }
+        }
+
+        if (section == 2) {
+            if (history.isEmpty()) Text("No past bookings yet.", color = Slate600)
+            history.forEach { job -> HistoryRow(job) }
+        }
     }
 }
+
+@Composable
+private fun SummaryRow(ui: MainViewModel.HelperUi) {
+    val s = ui.summary ?: return
+    Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = EmeraldContainer)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column { Text("Today", fontSize = 12.sp, color = Slate600); Text("₹${s.todayEarned.toInt()} · ${s.todayJobs} job${if (s.todayJobs == 1) "" else "s"}", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp) }
+                Column(horizontalAlignment = Alignment.End) { Text("All time", fontSize = 12.sp, color = Slate600); Text("₹${s.totalEarned.toInt()} · ${s.totalJobs}", fontWeight = FontWeight.Bold) }
+            }
+            if (ui.ratings > 0 && ui.rating != null) Text("Rating ★ ${"%.1f".format(ui.rating)} (${ui.ratings})", fontSize = 12.sp, color = Slate600)
+            if (s.toReceive > 0) Text("Sndmart will pay you ₹${s.toReceive.toInt()} (online bookings)", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            if (s.toPay > 0) Text("You owe Sndmart ₹${s.toPay.toInt()} commission (cash bookings)", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = AmberOnContainer)
+        }
+    }
+}
+
+@Composable
+private fun HistoryRow(job: HelperJob) {
+    Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row {
+                Text("${job.taskType} · ${job.durationMinutes} min", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text(if (job.status == "completed") "₹${job.helperAmount.toInt()}" else job.status.replace('_', ' '), fontWeight = FontWeight.SemiBold, color = if (job.status == "completed") EmeraldPrimary else Slate600)
+            }
+            Text("${job.bookingNumber} · ${job.addressLine}", fontSize = 12.sp, color = Slate600, maxLines = 1)
+            job.createdAt?.let { parseIsoMillis(it) }?.let { Text(SimpleDateFormat("d MMM, h:mm a", Locale.getDefault()).format(Date(it)), fontSize = 11.sp, color = Slate600) }
+        }
+    }
+}
+
 
 @Composable
 private fun JobCard(job: HelperJob, busy: Boolean, onPhoto: (String) -> Unit, actions: @Composable ColumnScope.() -> Unit) {
