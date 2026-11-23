@@ -332,6 +332,13 @@ interface SupabaseApiService {
         @Body params: Map<String, @JvmSuppressWildcards Any>
     ): Response<ResponseBody>
 
+    // Quick Helper: join as helper
+    @POST("rest/v1/rpc/partner_helper_join_info")
+    suspend fun rpcHelperJoinInfo(@Header("apikey") apiKey: String, @Header("Authorization") bearerToken: String, @Body params: Map<String, String>): Response<ResponseBody>
+
+    @POST("rest/v1/rpc/partner_helper_join_request")
+    suspend fun rpcHelperJoinRequest(@Header("apikey") apiKey: String, @Header("Authorization") bearerToken: String, @Body params: Map<String, String>): Response<ResponseBody>
+
     // Quick Helper
     @POST("rest/v1/rpc/helper_partner_status")
     suspend fun rpcHelperStatus(

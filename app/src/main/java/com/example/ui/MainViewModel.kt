@@ -99,7 +99,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun refreshHelper() { viewModelScope.launch { refreshHelperNow() } }
+    /** Invitation to join as helper: null = nothing to show; else the request status ("none" = never asked). */
+    private val _helperInvite = MutableStateFlow<String?>(null)
+    val helperInvite: StateFlow<String?> = _helperInvite.asStateFlow()
+    fun refreshHelperInvite() {
+        viewModelScope.launch {
+            val r = repository.getHelperJoinInfo().getOrNull() ?: return@launch
+            val (cityOn, isHelper, status) = r
+            _helperInvite.value = if (cityOn && !isHelper) (status ?: "none") else null
+        }
+    }
+    fun requestHelperJoin() {
+        viewModelScope.launch {
+            repository.requestHelperJoin()
+                .onSuccess { showMessage("Request sent / ವಿನಂತಿ ಕಳುಹಿಸಲಾಗಿದೆ"); refreshHelperInvite() }
+                .onFailure { showMessage(it.message ?: "Could not send the request") }
+        }
+    }
+
+    fun refreshHelper() { viewModelScope.launch { refreshHelperNow(); refreshHelperInvite() } }
 
     private suspend fun refreshHelperNow() {
         val status = repository.getHelperStatus().getOrNull() ?: return

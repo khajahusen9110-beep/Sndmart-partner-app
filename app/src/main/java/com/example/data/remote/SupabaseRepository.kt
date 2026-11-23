@@ -1309,6 +1309,25 @@ class SupabaseRepository(
     // ---------- Quick Helper ----------
 
     /** Is this partner a helper (the Helper tab shows only then, or when helper bookings exist). */
+    /** Whether to invite this partner to join as a helper: (cityEnabled, helperEnabled, requestStatus). */
+    suspend fun getHelperJoinInfo(): Result<Triple<Boolean, Boolean, String?>> = withContext(Dispatchers.IO) {
+        try {
+            ensureValidSession()
+            val response = apiService.rpcHelperJoinInfo(prefs.customSupabaseKey, bearer(), emptyMap())
+            if (!response.isSuccessful) return@withContext Result.failure(Exception(errorMessage(response, "Could not load")))
+            val o = JSONObject(response.body()?.string().orEmpty())
+            Result.success(Triple(o.optBoolean("city_enabled"), o.optBoolean("helper_enabled"), if (o.isNull("request_status")) null else o.optString("request_status")))
+        } catch (e: Exception) { Result.failure(e) }
+    }
+
+    suspend fun requestHelperJoin(): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            ensureValidSession()
+            val response = apiService.rpcHelperJoinRequest(prefs.customSupabaseKey, bearer(), emptyMap())
+            if (response.isSuccessful) Result.success(Unit) else Result.failure(Exception(errorMessage(response, "Could not send the request")))
+        } catch (e: Exception) { Result.failure(e) }
+    }
+
     suspend fun getHelperStatus(): Result<HelperStatusDto> = withContext(Dispatchers.IO) {
         try {
             ensureValidSession()

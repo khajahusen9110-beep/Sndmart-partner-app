@@ -188,6 +188,22 @@ fun DashboardScreen(
         )
     }
 
+    // Invitation to join as helper (Kannada + English): a popup once a day, and a card on the dashboard
+    val helperInvite by viewModel.helperInvite.collectAsState()
+    var showInvite by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { viewModel.refreshHelperInvite() }
+    LaunchedEffect(helperInvite) {
+        val st = helperInvite
+        if (st == "none" || st == "rejected") {
+            val sp = context.getSharedPreferences("sndmart_partner_prefs", android.content.Context.MODE_PRIVATE)
+            val today = System.currentTimeMillis() / 86_400_000L
+            if (sp.getLong("helper_invite_day", -1L) != today) { sp.edit().putLong("helper_invite_day", today).apply(); showInvite = true }
+        }
+    }
+    if (showInvite) helperInvite?.let { st ->
+        HelperInviteDialog(st, onRequest = { showInvite = false; viewModel.requestHelperJoin() }, onLater = { showInvite = false })
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -195,6 +211,7 @@ fun DashboardScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        helperInvite?.let { st -> item { HelperInviteCard(st, onRequest = { viewModel.requestHelperJoin() }) } }
         cashStatus?.takeIf { it.blocked }?.let { status ->
             item { CashLimitBanner(status) }
         }
