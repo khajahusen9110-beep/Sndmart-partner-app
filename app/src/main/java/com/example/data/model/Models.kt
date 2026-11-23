@@ -204,8 +204,10 @@ data class CityDbModel(
 data class DeliveryEarning(
     val id: String,
     @Json(name = "delivery_partner_id") val deliveryPartnerId: String = "",
-    @Json(name = "order_id") val orderId: String = "",
+    // a Quick Helper job has no delivery order: order_id is empty and source is "helper"
+    @Json(name = "order_id") val orderId: String? = null,
     @Json(name = "order_number") val orderNumber: String = "",
+    val source: String = "delivery",
     @Json(name = "delivery_fee") val deliveryFee: Double = 0.0,
     val incentive: Double = 0.0,
     val penalty: Double = 0.0,

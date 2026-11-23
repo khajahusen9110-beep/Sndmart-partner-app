@@ -207,7 +207,7 @@ interface SupabaseApiService {
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("delivery_partner_id") partnerIdFilter: String,
-        @Query("select") select: String = "id,delivery_partner_id,order_id,delivery_fee,incentive,penalty,net_earning,status,paid_at,created_at",
+        @Query("select") select: String = "id,delivery_partner_id,order_id,source,delivery_fee,incentive,penalty,net_earning,status,paid_at,created_at",
         @Query("order") order: String = "created_at.desc",
         @Query("limit") limit: Int = 20,
         @Query("offset") offset: Int = 0

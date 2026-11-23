@@ -2210,7 +2210,9 @@ class SupabaseRepository(
 
             if (response.isSuccessful && response.body() != null) {
                 val list = response.body()!!.map { earning ->
-                    if (earning.orderNumber.isBlank() && earning.orderId.isNotBlank()) {
+                    if (earning.source == "helper") {
+                        earning.copy(orderNumber = if (earning.netEarning < 0) "Quick Helper commission" else "Quick Helper job")
+                    } else if (earning.orderNumber.isBlank() && !earning.orderId.isNullOrBlank()) {
                         earning.copy(orderNumber = "Order #${earning.orderId.takeLast(6).uppercase()}")
                     } else earning
                 }
