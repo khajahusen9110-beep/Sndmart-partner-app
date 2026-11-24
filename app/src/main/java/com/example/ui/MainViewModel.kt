@@ -105,6 +105,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Refreshes the remote control data (banners, flags) for this partner's city. */
+    suspend fun refreshRemoteConfig(context: android.content.Context) {
+        val cityId = (_authUiState.value as? AuthUiState.Authenticated)?.partner?.cityId
+        com.example.remote.RemoteConfigStore.refresh(context, minGapMs = 30 * 60_000L) { repository.getRemoteConfigRaw(cityId, com.example.BuildConfig.VERSION_CODE) }
+    }
+
     private val _incentive = MutableStateFlow<IncentiveStatus?>(null)
     val incentive: StateFlow<IncentiveStatus?> = _incentive.asStateFlow()
     fun refreshIncentive() { viewModelScope.launch { repository.getIncentiveStatus().onSuccess { _incentive.value = it.takeIf { s -> s.enabled } } } }

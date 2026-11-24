@@ -1309,6 +1309,15 @@ class SupabaseRepository(
     // ---------- Quick Helper ----------
 
     /** Is this partner a helper (the Helper tab shows only then, or when helper bookings exist). */
+    /** Raw JSON of the remote control data (banners, flags) for the partner app in this city; null on any problem. */
+    suspend fun getRemoteConfigRaw(cityId: String?, versionCode: Int): String? = withContext(Dispatchers.IO) {
+        try {
+            ensureValidSession()
+            val res = apiService.rpcRemoteConfig(prefs.customSupabaseKey, bearer(), mapOf("p_app" to "partner", "p_city_id" to cityId, "p_version_code" to versionCode))
+            if (res.isSuccessful) res.body()?.string() else null
+        } catch (e: Exception) { null }
+    }
+
     suspend fun getIncentiveStatus(): Result<IncentiveStatus> = withContext(Dispatchers.IO) {
         try {
             ensureValidSession()

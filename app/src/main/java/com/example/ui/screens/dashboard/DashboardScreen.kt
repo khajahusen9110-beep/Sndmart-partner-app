@@ -188,6 +188,9 @@ fun DashboardScreen(
         )
     }
 
+    // announcements from the City Admin (no app update needed)
+    val remoteCfg by com.example.remote.RemoteConfigStore.config.collectAsState()
+    val hasRemote = remoteCfg.blocks.any { it.slot == "home" }
     // Today's incentives: a card on the dashboard and a full progress screen
     val incentive by viewModel.incentive.collectAsState()
     var showIncentive by remember { mutableStateOf(false) }
@@ -219,6 +222,7 @@ fun DashboardScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        if (hasRemote) item { com.example.remote.RemoteBlocksStrip("home", onScreen = { com.example.remote.RemoteActions.open(it) }, modifier = Modifier.offset(x = (-16).dp)) }
         incentive?.let { inc -> item { IncentiveCard(inc, onOpen = { showIncentive = true }) } }
         helperInvite?.let { st -> item { HelperInviteCard(st, onRequest = { viewModel.requestHelperJoin() }) } }
         cashStatus?.takeIf { it.blocked }?.let { status ->

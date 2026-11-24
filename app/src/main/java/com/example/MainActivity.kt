@@ -238,6 +238,23 @@ fun MainAppRoot(viewModel: MainViewModel, onUpdateApp: () -> Unit = {}) {
     var currentTab by remember { mutableStateOf(MainNavigationTab.DASHBOARD) }
     val helperUi by viewModel.helperUi.collectAsState()
     val openHelperCount by viewModel.openHelperTab.collectAsState()
+    // remote control (banners, notices, flags from the City Admin): load now, refresh about hourly
+    val remoteContext = LocalContext.current
+    LaunchedEffect(Unit) {
+        com.example.remote.RemoteConfigStore.load(remoteContext)
+        while (true) { viewModel.refreshRemoteConfig(remoteContext); kotlinx.coroutines.delay(60 * 60_000L) }
+    }
+    LaunchedEffect(Unit) {
+        com.example.remote.RemoteActions.handler = { name ->
+            when (name) {
+                "helper" -> viewModel.openHelperTab()
+                "incentives" -> viewModel.requestOpenScreen("incentives")
+                "earnings" -> currentTab = MainNavigationTab.EARNINGS
+                "orders" -> currentTab = MainNavigationTab.DELIVERIES
+                "home" -> currentTab = MainNavigationTab.DASHBOARD
+            }
+        }
+    }
     // an incentive push opens the Dashboard (its incentive screen), a wallet push opens Earnings
     val openScreen by viewModel.openScreen.collectAsState()
     LaunchedEffect(openScreen) {
