@@ -397,8 +397,12 @@ fun EarningItemCard(earning: DeliveryEarning) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(text = "Base Delivery: ₹${earning.deliveryFee.toInt()}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
-                if (earning.incentive > 0) {
+                if (earning.source == "weekly_incentive") {
+                    Text(text = "Weekly bonus: +₹${earning.incentive.toInt()}", style = MaterialTheme.typography.labelSmall.copy(color = EmeraldPrimary, fontWeight = FontWeight.Bold))
+                } else {
+                    Text(text = "Base Delivery: ₹${earning.deliveryFee.toInt()}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                }
+                if (earning.incentive > 0 && earning.source != "weekly_incentive") {
                     Text(text = "Peak Surge: +₹${earning.incentive.toInt()}", style = MaterialTheme.typography.labelSmall.copy(color = EmeraldPrimary, fontWeight = FontWeight.Bold))
                 }
                 StatusPill(
