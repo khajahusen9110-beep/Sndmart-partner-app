@@ -31,3 +31,7 @@
 -keepclassmembers,allowshrinking,allowobfuscation interface * { @retrofit2.http.* <methods>; }
 -dontwarn okhttp3.internal.platform.**
 -dontwarn org.conscrypt.**
+
+# Razorpay Checkout
+-keep class com.razorpay.** { *; }
+-dontwarn com.razorpay.**

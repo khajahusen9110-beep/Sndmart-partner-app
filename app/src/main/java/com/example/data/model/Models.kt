@@ -273,6 +273,19 @@ data class CashStatus(
     val awaitingVerification: Boolean get() = pendingSettlement > 0.0
 }
 
+/** Response of the partner-cash-payment edge function (create / verify / sync). */
+@JsonClass(generateAdapter = true)
+data class CashPayOrder(
+    @Json(name = "razorpay_order_id") val razorpayOrderId: String? = null,
+    val amount: Long = 0,
+    val currency: String? = null,
+    @Json(name = "key_id") val keyId: String? = null,
+    @Json(name = "payment_id") val paymentId: String? = null,
+    val success: Boolean = false,
+    val result: String? = null,
+    val error: String? = null
+)
+
 /**
  * Response of the partner-order-qr edge function: a door-step UPI QR for collecting a
  * cash-on-delivery order online (money goes to the Sndmart account, not the partner).

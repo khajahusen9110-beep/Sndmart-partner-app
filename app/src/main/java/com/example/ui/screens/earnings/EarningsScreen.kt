@@ -34,6 +34,7 @@ import com.example.util.parseIsoMillis
 
 @Composable
 fun EarningsScreen(
+    onPayCash: () -> Unit = {},
     viewModel: MainViewModel
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -325,7 +326,7 @@ fun EarningsScreen(
     }
 
     val settlement = cashStatus
-    if (showRemittanceDialog && settlement?.settlementUpiId != null) {
+    if (showRemittanceDialog && settlement != null) {
         // City has a settlement UPI ID: pay the whole cash in hand by UPI.
         AlertDialog(
             onDismissRequest = { showRemittanceDialog = false },
@@ -337,6 +338,7 @@ fun EarningsScreen(
                             CashSettlementPanel(
                                 status = settlement,
                                 isLoading = isActionLoading,
+                                onPayOnline = { showRemittanceDialog = false; onPayCash() },
                                 onSubmit = { utr, done ->
                                     viewModel.submitCashSettlement(utr) { ok ->
                                         done(ok)
