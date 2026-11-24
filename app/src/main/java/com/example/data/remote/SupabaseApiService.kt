@@ -332,6 +332,10 @@ interface SupabaseApiService {
         @Body params: Map<String, @JvmSuppressWildcards Any>
     ): Response<ResponseBody>
 
+    // Remote control: banners, notices and flags from the City Admin (no app update needed)
+    @POST("rest/v1/rpc/get_remote_config")
+    suspend fun rpcRemoteConfig(@Header("apikey") apiKey: String, @Header("Authorization") bearerToken: String, @Body params: Map<String, @JvmSuppressWildcards Any?>): Response<ResponseBody>
+
     // Incentives
     @POST("rest/v1/rpc/partner_incentive_status")
     suspend fun rpcIncentiveStatus(@Header("apikey") apiKey: String, @Header("Authorization") bearerToken: String, @Body params: Map<String, String>): Response<ResponseBody>

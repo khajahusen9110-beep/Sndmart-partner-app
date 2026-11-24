@@ -55,7 +55,11 @@ open class DeliveryPartnerFcmService : FirebaseMessagingService() {
         }
 
         if (assignmentId.isBlank()) {
-            showInfoNotification(title, body, data["image_url"], opensHelper = data["type"].orEmpty().startsWith("helper_"))
+            showInfoNotification(title, body, data["image_url"], opensHelper = data["type"].orEmpty().startsWith("helper_"), openScreen = when {
+                data["type"].orEmpty().startsWith("incentive_") -> "incentives"
+                data["type"].orEmpty().startsWith("wallet_") -> "earnings"
+                else -> null
+            })
             repo.addNotification(title, body, "info")
             return
         }
@@ -95,9 +99,10 @@ open class DeliveryPartnerFcmService : FirebaseMessagingService() {
         }
     }
 
-    private fun showInfoNotification(title: String, body: String, imageUrl: String?, opensHelper: Boolean = false) {
+    private fun showInfoNotification(title: String, body: String, imageUrl: String?, opensHelper: Boolean = false, openScreen: String? = null) {
         val intent = Intent(this, MainActivity::class.java).apply {
             if (opensHelper) putExtra(MainActivity.EXTRA_OPEN_HELPER, true)
+            if (openScreen != null) putExtra(MainActivity.EXTRA_OPEN_SCREEN, openScreen)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val notifyId = (title + body).hashCode()

@@ -88,6 +88,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val openHelperTab: StateFlow<Int> = _openHelperTab.asStateFlow()
     fun openHelperTab() { _openHelperTab.value += 1 }
 
+    /** A push asked to open a screen ("incentives" or "earnings"); the screen that handles it clears it. */
+    private val _openScreen = MutableStateFlow<String?>(null)
+    val openScreen: StateFlow<String?> = _openScreen.asStateFlow()
+    fun requestOpenScreen(name: String) { _openScreen.value = name }
+    fun clearOpenScreen() { _openScreen.value = null }
+
     /** Looks at helper requests and bookings now and then (faster while the app is on screen). */
     fun startHelperWatcher() {
         helperJob?.cancel()
@@ -97,6 +103,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 delay(if (com.example.MainActivity.isVisible) 10_000L else 30_000L)
             }
         }
+    }
+
+    /** Refreshes the remote control data (banners, flags) for this partner's city. */
+    suspend fun refreshRemoteConfig(context: android.content.Context) {
+        val cityId = (_authUiState.value as? AuthUiState.Authenticated)?.partner?.cityId
+        com.example.remote.RemoteConfigStore.refresh(context, minGapMs = 30 * 60_000L) { repository.getRemoteConfigRaw(cityId, com.example.BuildConfig.VERSION_CODE) }
     }
 
     private val _incentive = MutableStateFlow<IncentiveStatus?>(null)

@@ -188,10 +188,15 @@ fun DashboardScreen(
         )
     }
 
+    // announcements from the City Admin (no app update needed)
+    val remoteCfg by com.example.remote.RemoteConfigStore.config.collectAsState()
+    val hasRemote = remoteCfg.blocks.any { it.slot == "home" }
     // Today's incentives: a card on the dashboard and a full progress screen
     val incentive by viewModel.incentive.collectAsState()
     var showIncentive by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { while (true) { viewModel.refreshIncentive(); kotlinx.coroutines.delay(60_000) } }
+    val openScreen by viewModel.openScreen.collectAsState()
+    LaunchedEffect(openScreen, incentive) { if (openScreen == "incentives" && incentive != null) { showIncentive = true; viewModel.clearOpenScreen() } }
     if (showIncentive) incentive?.let { IncentiveDialog(it, onClose = { showIncentive = false }) }
 
     // Invitation to join as helper (Kannada + English): a popup once a day, and a card on the dashboard
@@ -217,6 +222,7 @@ fun DashboardScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        if (hasRemote) item { com.example.remote.RemoteBlocksStrip("home", onScreen = { com.example.remote.RemoteActions.open(it) }, modifier = Modifier.offset(x = (-16).dp)) }
         incentive?.let { inc -> item { IncentiveCard(inc, onOpen = { showIncentive = true }) } }
         helperInvite?.let { st -> item { HelperInviteCard(st, onRequest = { viewModel.requestHelperJoin() }) } }
         cashStatus?.takeIf { it.blocked }?.let { status ->
