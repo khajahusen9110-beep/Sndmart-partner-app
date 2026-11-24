@@ -34,7 +34,7 @@ android {
     // Bump versionCode for every Play upload (or pass VERSION_CODE from CI); Play rejects a
     // code it has already seen. VERSION_NAME is what the force-update check compares against
     // app_versions. 1.1.0 = RPC-only release; every partner must be on it before Phase 2.
-    versionCode = System.getenv("VERSION_CODE")?.takeIf { it.isNotBlank() }?.toInt() ?: 7
+    versionCode = System.getenv("VERSION_CODE")?.takeIf { it.isNotBlank() }?.toInt() ?: 8
     versionName = System.getenv("VERSION_NAME")?.takeIf { it.isNotBlank() } ?: "1.3.2"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -112,6 +112,12 @@ googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.W
 
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.
+// Razorpay checkout asks for the LATEST standard-core; pinned like the customer app so the UPI option cannot vanish
+// after a Razorpay release. Move on purpose, after testing UPI on a real phone.
+configurations.all {
+  resolutionStrategy.force("com.razorpay:standard-core:1.7.21", "com.razorpay:core:1.0.21")
+}
+
 dependencies {
   implementation(platform(libs.androidx.compose.bom))
   implementation(platform(libs.firebase.bom))
@@ -138,6 +144,7 @@ dependencies {
   implementation(libs.okhttp)
   implementation(libs.play.services.location)
   implementation(libs.play.services.maps)
+  implementation(libs.razorpay.checkout)
   implementation(libs.play.app.update.ktx)
   // play app-update pulls in an old androidx.fragment that breaks ActivityResult APIs.
   implementation(libs.androidx.fragment.ktx)

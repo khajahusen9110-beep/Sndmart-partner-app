@@ -73,6 +73,7 @@ fun CashSettlementScreen(
     isLoading: Boolean,
     onRefresh: () -> Unit,
     onSubmit: (String, (Boolean) -> Unit) -> Unit,
+    onPayOnline: () -> Unit,
     onSignOut: () -> Unit
 ) {
     // Picks up the admin's verification without the partner doing anything.
@@ -108,11 +109,11 @@ fun CashSettlementScreen(
             Text(
                 "You are holding ₹${rupees(status.cashInHand)} of cash-on-delivery money" +
                     (status.cashLimit?.let { ", the limit for your city is ₹${rupees(it)}" } ?: "") +
-                    ". Pay it to Sndmart by UPI to receive orders again.",
+                    ". Pay it to Sndmart by UPI. The app opens again by itself once the payment is confirmed.",
                 style = MaterialTheme.typography.bodyMedium
             )
             Spacer(Modifier.height(20.dp))
-            CashSettlementPanel(status = status, isLoading = isLoading, onSubmit = onSubmit)
+            CashSettlementPanel(status = status, isLoading = isLoading, onSubmit = onSubmit, onPayOnline = onPayOnline)
             Spacer(Modifier.height(16.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onRefresh, enabled = !isLoading) { Text("Check status") }
@@ -127,7 +128,8 @@ fun CashSettlementScreen(
 fun CashSettlementPanel(
     status: CashStatus,
     isLoading: Boolean,
-    onSubmit: (String, (Boolean) -> Unit) -> Unit
+    onSubmit: (String, (Boolean) -> Unit) -> Unit,
+    onPayOnline: () -> Unit
 ) {
     val context = LocalContext.current
     val last = status.lastSettlement
@@ -142,11 +144,23 @@ fun CashSettlementPanel(
                 " is with your city admin. The app opens as soon as it is verified."
         )
 
-        upiId == null -> InfoCard(
-            icon = { Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
-            title = "Settlement UPI not set",
-            message = "Your city has not set a UPI ID for cash settlement yet. Please contact your city admin."
-        )
+        upiId == null -> Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Amount to pay", style = MaterialTheme.typography.labelMedium)
+                Text("₹${rupees(status.cashInHand)}", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
+                Button(
+                    onClick = onPayOnline,
+                    enabled = !isLoading && status.cashInHand > 0.0,
+                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
+                    modifier = Modifier.fillMaxWidth().testTag("pay_online")
+                ) { Text("Pay ₹${rupees(status.cashInHand)} now (PhonePe / GPay / Paytm)", fontWeight = FontWeight.Bold) }
+                Text(
+                    "Instant: the app opens by itself as soon as the payment goes through.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+            }
+        }
 
         else -> {
             var utr by rememberSaveable { mutableStateOf("") }
@@ -172,6 +186,21 @@ fun CashSettlementPanel(
                         fontWeight = FontWeight.ExtraBold,
                         modifier = Modifier.testTag("settlement_amount")
                     )
+                    Button(
+                        onClick = onPayOnline,
+                        enabled = !isLoading && amount > 0.0,
+                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("pay_online")
+                    ) { Text("Pay ₹${rupees(amount)} now (PhonePe / GPay / Paytm)", fontWeight = FontWeight.Bold) }
+                    Text(
+                        "Instant: the app opens by itself as soon as the payment goes through. No UTR or admin approval needed.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                    HorizontalDivider()
+                    Text("Paid to the UPI ID directly? Enter the UTR below for your city admin to verify.", style = MaterialTheme.typography.labelMedium)
                     Text("Pay to", style = MaterialTheme.typography.labelMedium)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -189,7 +218,7 @@ fun CashSettlementPanel(
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("pay_with_upi")
-                    ) { Text("1. Pay ₹${rupees(amount)} with UPI", fontWeight = FontWeight.Bold) }
+                    ) { Text("1. Pay ₹${rupees(amount)} to this UPI ID", fontWeight = FontWeight.Bold) }
                     OutlinedTextField(
                         value = utr,
                         onValueChange = { input -> utr = input.filter { it.isLetterOrDigit() }.uppercase().take(35) },

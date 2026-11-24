@@ -62,7 +62,7 @@ enum class MainNavigationTab(val title: String, val icon: ImageVector) {
     PROFILE("Profile", Icons.Default.Person)
 }
 
-class MainActivity : ComponentActivity() {
+class MainActivity : ComponentActivity(), com.razorpay.PaymentResultWithDataListener {
     private val viewModel: MainViewModel by viewModels()
 
     private val appUpdateManager by lazy { AppUpdateManagerFactory.create(this) }
@@ -141,7 +141,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             MyApplicationTheme {
                 androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize().then(com.example.util.TapFeedbackModifier)) {
-                    MainAppRoot(viewModel = viewModel, onUpdateApp = ::startAppUpdate)
+                    MainAppRoot(viewModel = viewModel, onUpdateApp = ::startAppUpdate, onPayCash = ::startCashPayment)
                 }
             }
         }
@@ -205,6 +205,23 @@ class MainActivity : ComponentActivity() {
             private set
     }
 
+    /** Razorpay result for the COD cash settlement: the server confirms it, then the app unblocks by itself. */
+    override fun onPaymentSuccess(razorpayPaymentId: String?, data: com.razorpay.PaymentData?) {
+        viewModel.onCashPaymentResult(data?.orderId, razorpayPaymentId ?: data?.paymentId, data?.signature, failed = false)
+    }
+
+    override fun onPaymentError(code: Int, response: String?, data: com.razorpay.PaymentData?) {
+        // Cancelled or failed on screen: still ask the server, because the money may have gone through.
+        viewModel.onCashPaymentResult(data?.orderId, data?.paymentId, null, failed = true)
+    }
+
+    private fun startCashPayment() {
+        viewModel.payCashOnline { order, phone ->
+            com.example.util.CashPaymentCheckout.open(this, order, phone)
+                .onFailure { viewModel.showMessage("Could not open the payment screen") }
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         isVisible = true
@@ -220,7 +237,7 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainAppRoot(viewModel: MainViewModel, onUpdateApp: () -> Unit = {}) {
+fun MainAppRoot(viewModel: MainViewModel, onUpdateApp: () -> Unit = {}, onPayCash: () -> Unit = {}) {
     val authState by viewModel.authUiState.collectAsState()
     val userMessage by viewModel.userMessage.collectAsState()
     val selectedAssignment by viewModel.selectedAssignmentForDetail.collectAsState()
@@ -327,6 +344,7 @@ fun MainAppRoot(viewModel: MainViewModel, onUpdateApp: () -> Unit = {}) {
                 isLoading = isActionLoading,
                 onRefresh = { viewModel.refreshCashStatus() },
                 onSubmit = { utr, done -> viewModel.submitCashSettlement(utr, done) },
+                onPayOnline = onPayCash,
                 onSignOut = { viewModel.signOut() }
             )
             SnackbarHost(snackbarHostState, Modifier.align(androidx.compose.ui.Alignment.BottomCenter))
@@ -563,7 +581,7 @@ fun MainAppRoot(viewModel: MainViewModel, onUpdateApp: () -> Unit = {}) {
                                     }
 
                                     MainNavigationTab.EARNINGS -> {
-                                        EarningsScreen(viewModel = viewModel)
+                                        EarningsScreen(onPayCash = onPayCash, viewModel = viewModel)
                                     }
 
                                     MainNavigationTab.PROFILE -> {

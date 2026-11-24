@@ -371,6 +371,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { repository.fetchCashStatus() }
     }
 
+    private var pendingCashPaymentId: String? = null
+
+    /** Starts the online UPI payment of the whole cash in hand; [open] shows Razorpay Checkout. */
+    fun payCashOnline(open: (CashPayOrder, String?) -> Unit) {
+        if (_isActionLoading.value) return
+        viewModelScope.launch {
+            _isActionLoading.value = true
+            val res = repository.createCashPayment()
+            _isActionLoading.value = false
+            res.onSuccess {
+                pendingCashPaymentId = it.paymentId
+                open(it, prefs.userPhone)
+            }.onFailure { showMessage(it.message ?: "Could not start the payment") }
+        }
+    }
+
+    /** Razorpay finished: the server verifies the payment itself (signature / Razorpay lookup), then the app opens. */
+    fun onCashPaymentResult(orderId: String?, paymentId: String?, signature: String?, failed: Boolean) {
+        viewModelScope.launch {
+            _isActionLoading.value = true
+            val params = mutableMapOf("action" to if (failed || signature.isNullOrBlank()) "sync" else "verify")
+            pendingCashPaymentId?.let { params["payment_id"] = it }
+            if (params["action"] == "verify") {
+                params["razorpay_order_id"] = orderId.orEmpty()
+                params["razorpay_payment_id"] = paymentId.orEmpty()
+                params["razorpay_signature"] = signature.orEmpty()
+            }
+            val res = repository.confirmCashPayment(params)
+            _isActionLoading.value = false
+            res.onSuccess {
+                when (it) {
+                    "paid", "already_paid" -> { pendingCashPaymentId = null; showMessage("Payment received. Your account is open.") }
+                    else -> if (!failed) showMessage("Payment is being confirmed. The app opens automatically in a minute.")
+                }
+            }.onFailure { showMessage(it.message ?: "Payment could not be confirmed yet. It will be checked again automatically.") }
+        }
+    }
+
     fun submitCashSettlement(utr: String, onDone: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
             _isActionLoading.value = true

@@ -1681,6 +1681,46 @@ class SupabaseRepository(
         }
     }
 
+    /** Starts the online payment of the whole cash in hand; the amount comes from the server. */
+    suspend fun createCashPayment(): Result<CashPayOrder> = withContext(Dispatchers.IO) {
+        try {
+            ensureValidSession()
+            val response = apiService.partnerCashPayment(
+                apiKey = prefs.customSupabaseKey, bearerToken = bearer(), params = mapOf("action" to "create")
+            )
+            val body = response.body()
+            if (response.isSuccessful && body?.razorpayOrderId != null && !body.keyId.isNullOrBlank()) Result.success(body)
+            else Result.failure(Exception(errorMessage(response, "Could not start the payment")))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Asks the server to confirm a payment: "verify" with the Razorpay result, or "sync" (server asks Razorpay itself,
+     * for a lost callback). On success the cash status is refreshed, which unblocks the partner.
+     */
+    suspend fun confirmCashPayment(params: Map<String, String>): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            ensureValidSession()
+            val response = apiService.partnerCashPayment(
+                apiKey = prefs.customSupabaseKey, bearerToken = bearer(), params = params
+            )
+            val body = response.body()
+            if (!response.isSuccessful || body == null) {
+                return@withContext Result.failure(Exception(errorMessage(response, "Could not confirm the payment")))
+            }
+            val result = body.result ?: "nothing"
+            if (result == "paid" || result == "already_paid") {
+                fetchCashStatus()
+                fetchCashLedger()
+            }
+            Result.success(result)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     /**
      * Creates (or re-fetches) a door-step UPI QR for collecting a COD order online.
      * The amount is decided by the server from the order; money goes to the Sndmart account.
@@ -2230,6 +2270,8 @@ class SupabaseRepository(
                 val list = response.body()!!.map { earning ->
                     if (earning.source == "helper") {
                         earning.copy(orderNumber = if (earning.netEarning < 0) "Quick Helper commission" else "Quick Helper job")
+                    } else if (earning.source == "weekly_incentive") {
+                        earning.copy(orderNumber = "Weekly target bonus")
                     } else if (earning.orderNumber.isBlank() && !earning.orderId.isNullOrBlank()) {
                         earning.copy(orderNumber = "Order #${earning.orderId.takeLast(6).uppercase()}")
                     } else earning

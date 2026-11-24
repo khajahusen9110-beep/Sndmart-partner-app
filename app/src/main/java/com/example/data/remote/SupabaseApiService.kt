@@ -458,6 +458,14 @@ interface SupabaseApiService {
         @Body params: Map<String, String>
     ): Response<ResponseBody>
 
+    /** Online UPI payment of the whole cash in hand: {"action": "create" | "verify" | "sync", ...}. */
+    @POST("functions/v1/partner-cash-payment")
+    suspend fun partnerCashPayment(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Body params: Map<String, String>
+    ): Response<CashPayOrder>
+
     /**
      * Door-step UPI QR for collecting a COD order online.
      * body: {"order_id": "...", "action": "create" | "check"} (default "create").

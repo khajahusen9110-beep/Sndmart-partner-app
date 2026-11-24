@@ -273,6 +273,19 @@ data class CashStatus(
     val awaitingVerification: Boolean get() = pendingSettlement > 0.0
 }
 
+/** Response of the partner-cash-payment edge function (create / verify / sync). */
+@JsonClass(generateAdapter = true)
+data class CashPayOrder(
+    @Json(name = "razorpay_order_id") val razorpayOrderId: String? = null,
+    val amount: Long = 0,
+    val currency: String? = null,
+    @Json(name = "key_id") val keyId: String? = null,
+    @Json(name = "payment_id") val paymentId: String? = null,
+    val success: Boolean = false,
+    val result: String? = null,
+    val error: String? = null
+)
+
 /**
  * Response of the partner-order-qr edge function: a door-step UPI QR for collecting a
  * cash-on-delivery order online (money goes to the Sndmart account, not the partner).
@@ -500,8 +513,26 @@ data class HelperSummaryDto(
 data class IncentiveSlab(val minDeliveries: Int, val bonus: Double, val reached: Boolean)
 data class IncentivePeak(val name: String, val extra: Double, val startsAt: String?, val endsAt: String?)
 data class IncentiveDay(val day: String, val deliveries: Int, val incentive: Double)
+data class WeeklyDay(val day: String, val deliveries: Int)
+data class WeeklyHistory(val weekStart: String, val deliveries: Int, val earned: Double)
+/** Weekly targets (Monday 12:00 AM to Sunday, India time); the bonus is credited by the server when a target is reached. */
+data class WeeklyIncentive(
+    val weekStart: String,
+    val deliveries: Int,
+    val activeDays: Int,
+    val minActiveDays: Int,
+    val slabs: List<IncentiveSlab>,
+    val days: List<WeeklyDay>,
+    val history: List<WeeklyHistory>,
+    val earnedWeek: Double,
+    val acceptancePct: Int,
+    val minAcceptancePct: Int,
+    val acceptanceOk: Boolean
+)
 data class IncentiveStatus(
     val enabled: Boolean,
+    val dailyEnabled: Boolean = true,
+    val weekly: WeeklyIncentive? = null,
     val todayDeliveries: Int = 0,
     val slabs: List<IncentiveSlab> = emptyList(),
     val earnedToday: Double = 0.0,
@@ -523,8 +554,20 @@ data class IncentiveStatus(
             val sl = o.optJSONArray("slabs")
             val wk = o.optJSONArray("week")
             val acc = o.optJSONObject("acceptance")
+            val wkInc = o.optJSONObject("weekly")?.let { w ->
+                fun slabsOf(a: org.json.JSONArray?) = if (a == null) emptyList() else (0 until a.length()).map { i -> a.getJSONObject(i).let { IncentiveSlab(it.optInt("min_deliveries"), it.optDouble("bonus", 0.0), it.optBoolean("reached")) } }
+                val da = w.optJSONArray("days"); val ha = w.optJSONArray("history"); val wa = w.optJSONObject("acceptance")
+                WeeklyIncentive(
+                    weekStart = w.optString("week_start"), deliveries = w.optInt("deliveries"), activeDays = w.optInt("active_days"), minActiveDays = w.optInt("min_active_days"),
+                    slabs = slabsOf(w.optJSONArray("slabs")),
+                    days = if (da == null) emptyList() else (0 until da.length()).map { i -> da.getJSONObject(i).let { WeeklyDay(it.optString("day"), it.optInt("deliveries")) } },
+                    history = if (ha == null) emptyList() else (0 until ha.length()).map { i -> ha.getJSONObject(i).let { WeeklyHistory(it.optString("week_start"), it.optInt("deliveries"), it.optDouble("earned", 0.0)) } },
+                    earnedWeek = w.optDouble("earned_week", 0.0), acceptancePct = wa?.optInt("pct", 100) ?: 100,
+                    minAcceptancePct = wa?.optInt("min_pct", 0) ?: 0, acceptanceOk = wa?.optBoolean("ok", true) ?: true
+                )
+            }
             return IncentiveStatus(
-                enabled = true,
+                enabled = true, dailyEnabled = o.optBoolean("daily_enabled", true), weekly = wkInc,
                 todayDeliveries = o.optInt("today_deliveries"),
                 slabs = if (sl == null) emptyList() else (0 until sl.length()).map { i -> sl.getJSONObject(i).let { IncentiveSlab(it.optInt("min_deliveries"), it.optDouble("bonus", 0.0), it.optBoolean("reached")) } },
                 earnedToday = o.optDouble("earned_today", 0.0), peakToday = o.optDouble("peak_today", 0.0), dailyToday = o.optDouble("daily_today", 0.0),
