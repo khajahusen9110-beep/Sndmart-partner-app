@@ -192,6 +192,8 @@ fun DashboardScreen(
     val incentive by viewModel.incentive.collectAsState()
     var showIncentive by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { while (true) { viewModel.refreshIncentive(); kotlinx.coroutines.delay(60_000) } }
+    val openScreen by viewModel.openScreen.collectAsState()
+    LaunchedEffect(openScreen, incentive) { if (openScreen == "incentives" && incentive != null) { showIncentive = true; viewModel.clearOpenScreen() } }
     if (showIncentive) incentive?.let { IncentiveDialog(it, onClose = { showIncentive = false }) }
 
     // Invitation to join as helper (Kannada + English): a popup once a day, and a card on the dashboard

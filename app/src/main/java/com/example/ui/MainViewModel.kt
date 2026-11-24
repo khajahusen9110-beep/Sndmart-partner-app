@@ -88,6 +88,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val openHelperTab: StateFlow<Int> = _openHelperTab.asStateFlow()
     fun openHelperTab() { _openHelperTab.value += 1 }
 
+    /** A push asked to open a screen ("incentives" or "earnings"); the screen that handles it clears it. */
+    private val _openScreen = MutableStateFlow<String?>(null)
+    val openScreen: StateFlow<String?> = _openScreen.asStateFlow()
+    fun requestOpenScreen(name: String) { _openScreen.value = name }
+    fun clearOpenScreen() { _openScreen.value = null }
+
     /** Looks at helper requests and bookings now and then (faster while the app is on screen). */
     fun startHelperWatcher() {
         helperJob?.cancel()

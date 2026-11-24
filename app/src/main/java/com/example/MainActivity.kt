@@ -167,6 +167,11 @@ class MainActivity : ComponentActivity() {
             if (id.isNotBlank()) viewModel.acceptHelper(id)
             return
         }
+        intent?.getStringExtra(EXTRA_OPEN_SCREEN)?.takeIf { it.isNotBlank() }?.let { name ->
+            intent.removeExtra(EXTRA_OPEN_SCREEN)
+            viewModel.requestOpenScreen(name)
+            return
+        }
         if (intent?.getBooleanExtra(EXTRA_OPEN_HELPER, false) == true) {
             intent.removeExtra(EXTRA_OPEN_HELPER)
             viewModel.openHelperTab()
@@ -190,6 +195,9 @@ class MainActivity : ComponentActivity() {
         /** "Accept" on a Quick Helper request notification, and the extra that opens the Helper tab. */
         const val ACTION_ACCEPT_HELPER = "com.sndmart.delivery.action.ACCEPT_HELPER"
         const val EXTRA_OPEN_HELPER = "open_helper_tab"
+
+        /** A push for incentives or wallet money opens that screen ("incentives" / "earnings"). */
+        const val EXTRA_OPEN_SCREEN = "open_screen"
 
         /** True while the app is on screen; a new offer then opens full screen directly. */
         @Volatile
@@ -230,6 +238,14 @@ fun MainAppRoot(viewModel: MainViewModel, onUpdateApp: () -> Unit = {}) {
     var currentTab by remember { mutableStateOf(MainNavigationTab.DASHBOARD) }
     val helperUi by viewModel.helperUi.collectAsState()
     val openHelperCount by viewModel.openHelperTab.collectAsState()
+    // an incentive push opens the Dashboard (its incentive screen), a wallet push opens Earnings
+    val openScreen by viewModel.openScreen.collectAsState()
+    LaunchedEffect(openScreen) {
+        when (openScreen) {
+            "earnings" -> { currentTab = MainNavigationTab.EARNINGS; viewModel.clearOpenScreen() }
+            "incentives" -> currentTab = MainNavigationTab.DASHBOARD
+        }
+    }
     // an accepted request or a helper notification opens the Helper tab
     LaunchedEffect(openHelperCount) { if (openHelperCount > 0) currentTab = MainNavigationTab.HELPER }
     // the tab disappears when the partner is not a helper (any more)
