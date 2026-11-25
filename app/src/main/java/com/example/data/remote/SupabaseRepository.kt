@@ -1449,6 +1449,25 @@ class SupabaseRepository(
         }
     }
 
+    // Proof photos go through their own client: the shared one gives up after 15 s, too short for a slow mobile network.
+    private val proofClient: OkHttpClient by lazy {
+        okHttpClient.newBuilder()
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .writeTimeout(60, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .build()
+    }
+    private val proofApi: SupabaseApiService by lazy {
+        val url = prefs.customSupabaseUrl.let { if (it.endsWith("/")) it else "$it/" }
+        Retrofit.Builder().baseUrl(url).client(proofClient)
+            .addConverterFactory(MoshiConverterFactory.create(moshi)).build()
+            .create(SupabaseApiService::class.java)
+    }
+
+    // The last squeezed proof photo: a retry after a network failure must not squeeze the same picture again.
+    @Volatile private var lastPacked: Pair<ByteArray, ByteArray>? = null
+
     // Proof photo upload to Supabase storage bucket 'delivery-proof-photos'
     suspend fun uploadProofPhoto(
         assignmentId: String,
@@ -1462,31 +1481,40 @@ class SupabaseRepository(
             val storagePath = "$assignmentId/$fileName"
             // About 30 KB: uploads fast on a weak network and the proof stays readable. If the photo cannot be shrunk for any
             // reason the original is sent: a delivery must never be blocked by this.
-            val packed = com.example.util.ImageCompressor.compress(imageBytes, com.example.util.ImageCompressor.PROOF_TARGET_BYTES)?.bytes ?: imageBytes
+            val cached = lastPacked?.takeIf { it.first === imageBytes }?.second
+            val packed = cached ?: withContext(Dispatchers.Default) {
+                com.example.util.ImageCompressor.compress(imageBytes, com.example.util.ImageCompressor.PROOF_TARGET_BYTES)?.bytes ?: imageBytes
+            }.also { lastPacked = imageBytes to it }
             val requestBody = packed.toRequestBody("image/jpeg".toMediaTypeOrNull())
 
-            val response = withTimeout(30_000L) {
-                apiService.uploadStorageObject(
-                    apiKey = prefs.customSupabaseKey,
-                    bearerToken = bearer(),
-                    contentType = "image/jpeg",
-                    upsert = "true",
-                    bucket = bucket,
-                    folder = assignmentId,
-                    fileName = fileName,
-                    fileBytes = requestBody
-                )
+            var lastError: String? = null
+            for (attempt in 1..3) {
+                try {
+                    val response = withTimeout(75_000L) {
+                        proofApi.uploadStorageObject(
+                            apiKey = prefs.customSupabaseKey,
+                            bearerToken = bearer(),
+                            contentType = "image/jpeg",
+                            upsert = "true",
+                            bucket = bucket,
+                            folder = assignmentId,
+                            fileName = fileName,
+                            fileBytes = requestBody
+                        )
+                    }
+                    if (response.isSuccessful) return@withContext Result.success(storagePath)
+                    lastError = errorMessage(response, "Upload failed")
+                    Log.e("SupabaseRepo", "Proof photo upload error ($bucket/$storagePath): $lastError")
+                    if (response.code() in 400..499 && response.code() != 408 && response.code() != 429) break // a retry cannot help
+                } catch (e: TimeoutCancellationException) {
+                    lastError = "Upload timed out. Please check your network connection and retry."
+                } catch (e: java.io.IOException) {
+                    lastError = e.message ?: "Network error"
+                    Log.w("SupabaseRepo", "Proof photo upload attempt $attempt failed: $lastError")
+                }
+                if (attempt < 3) kotlinx.coroutines.delay(800L * attempt)
             }
-
-            if (response.isSuccessful) {
-                Result.success(storagePath)
-            } else {
-                val msg = errorMessage(response, "Upload failed")
-                Log.e("SupabaseRepo", "Proof photo upload error ($bucket/$storagePath): $msg")
-                Result.failure(Exception(msg))
-            }
-        } catch (e: TimeoutCancellationException) {
-            Result.failure(Exception("Upload timed out after 30 seconds. Please check your network connection and retry."))
+            Result.failure(Exception(lastError ?: "Upload failed"))
         } catch (e: Exception) {
             Log.e("SupabaseRepo", "Proof photo upload exception: ${e.message}", e)
             Result.failure(e)

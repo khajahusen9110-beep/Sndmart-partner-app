@@ -24,6 +24,8 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -149,8 +151,9 @@ fun ActiveDeliveryDetailScreen(
     ) { saved ->
         val uri = pickupCaptureUri?.let(Uri::parse)
         if (saved && uri != null) {
-            try {
-                val compressed = ImageUtils.compressAndResizeUri(context, uri)
+            coroutineScope.launch {
+try {
+                val compressed = withContext(Dispatchers.Default) { ImageUtils.compressAndResizeUri(context, uri) }
                 if (compressed != null && compressed.isNotEmpty()) {
                     startPickupPhotoUpload(compressed)
                 } else {
@@ -160,6 +163,7 @@ fun ActiveDeliveryDetailScreen(
                 Log.e("ActiveDeliveryDetail", "Failed to process pickup photo: ${e.message}", e)
                 viewModel.showMessage("Failed to process photo: ${e.message}")
             }
+}
         }
     }
 
@@ -191,8 +195,9 @@ fun ActiveDeliveryDetailScreen(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
-            try {
-                val compressed = ImageUtils.compressAndResizeUri(context, uri)
+            coroutineScope.launch {
+try {
+                val compressed = withContext(Dispatchers.Default) { ImageUtils.compressAndResizeUri(context, uri) }
                 if (compressed != null && compressed.isNotEmpty()) {
                     startPickupPhotoUpload(compressed)
                 } else {
@@ -202,6 +207,7 @@ fun ActiveDeliveryDetailScreen(
                 Log.e("ActiveDeliveryDetail", "Error reading image URI: ${e.message}", e)
                 viewModel.showMessage("Failed to load photo: ${e.message}")
             }
+}
         }
     }
 
@@ -264,8 +270,9 @@ fun ActiveDeliveryDetailScreen(
     ) { saved ->
         val uri = dropCaptureUri?.let(Uri::parse)
         if (saved && uri != null) {
-            try {
-                val compressed = ImageUtils.compressAndResizeUri(context, uri)
+            coroutineScope.launch {
+try {
+                val compressed = withContext(Dispatchers.Default) { ImageUtils.compressAndResizeUri(context, uri) }
                 if (compressed != null && compressed.isNotEmpty()) {
                     startDropPhotoUpload(compressed)
                 } else {
@@ -275,6 +282,7 @@ fun ActiveDeliveryDetailScreen(
                 Log.e("ActiveDeliveryDetail", "Failed to process drop photo: ${e.message}", e)
                 viewModel.showMessage("Failed to process photo: ${e.message}")
             }
+}
         }
     }
 
@@ -304,14 +312,16 @@ fun ActiveDeliveryDetailScreen(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
-            try {
-                val compressed = ImageUtils.compressAndResizeUri(context, uri)
+            coroutineScope.launch {
+try {
+                val compressed = withContext(Dispatchers.Default) { ImageUtils.compressAndResizeUri(context, uri) }
                 if (compressed != null && compressed.isNotEmpty()) {
                     startDropPhotoUpload(compressed)
                 }
             } catch (e: Exception) {
                 viewModel.showMessage("Failed to load photo: ${e.message}")
             }
+}
         }
     }
 
