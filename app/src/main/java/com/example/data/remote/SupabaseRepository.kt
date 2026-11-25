@@ -1385,6 +1385,25 @@ class SupabaseRepository(
         } catch (e: Exception) { Result.failure(e) }
     }
 
+    /** The city's helper categories with a tick on the ones this partner does; nothing ticked means every kind of job. */
+    suspend fun getHelperTags(): Result<List<HelperTag>> = withContext(Dispatchers.IO) {
+        try {
+            ensureValidSession()
+            val response = apiService.rpcHelperTags(prefs.customSupabaseKey, bearer(), emptyMap())
+            if (!response.isSuccessful) return@withContext Result.failure(Exception(errorMessage(response, "Could not load work types")))
+            val arr = JSONObject(response.body()?.string().orEmpty()).optJSONArray("tags") ?: org.json.JSONArray()
+            Result.success((0 until arr.length()).map { i -> arr.getJSONObject(i).let { HelperTag(it.getString("id"), it.optString("name"), it.optBoolean("selected")) } })
+        } catch (e: Exception) { Result.failure(e) }
+    }
+
+    suspend fun setHelperTags(ids: List<String>): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            ensureValidSession()
+            val response = apiService.rpcSetHelperTags(prefs.customSupabaseKey, bearer(), mapOf("p_ids" to ids))
+            if (response.isSuccessful) Result.success(Unit) else Result.failure(Exception(errorMessage(response, "Could not save")))
+        } catch (e: Exception) { Result.failure(e) }
+    }
+
     suspend fun getHelperStatus(): Result<HelperStatusDto> = withContext(Dispatchers.IO) {
         try {
             ensureValidSession()

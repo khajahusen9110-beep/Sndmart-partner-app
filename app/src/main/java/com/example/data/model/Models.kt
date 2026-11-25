@@ -485,6 +485,11 @@ data class HelperJob(
     val landmark: String? = null,
     val lat: Double? = null,
     val lng: Double? = null,
+    /** The customer's real GPS position when booking (with accuracy and distance from the saved address pin). */
+    @Json(name = "live_lat") val liveLat: Double? = null,
+    @Json(name = "live_lng") val liveLng: Double? = null,
+    @Json(name = "live_accuracy_m") val liveAccuracyM: Double? = null,
+    @Json(name = "live_distance_m") val liveDistanceM: Double? = null,
     @Json(name = "customer_name") val customerName: String? = null,
     @Json(name = "contact_phone") val contactPhone: String? = null,
     @Json(name = "price_total") val priceTotal: Double = 0.0,
@@ -498,6 +503,9 @@ data class HelperJob(
     @Json(name = "created_at") val createdAt: String? = null,
     @Json(name = "pending_extension") val pendingExtension: HelperExtensionAsk? = null
 )
+
+/** One kind of work (a City Admin helper category) this partner can tick as "I do this". */
+data class HelperTag(val id: String, val name: String, val selected: Boolean)
 
 @JsonClass(generateAdapter = true)
 data class HelperStatusDto(

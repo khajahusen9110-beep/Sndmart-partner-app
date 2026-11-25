@@ -356,6 +356,12 @@ interface SupabaseApiService {
     suspend fun rpcHelperJoinRequest(@Header("apikey") apiKey: String, @Header("Authorization") bearerToken: String, @Body params: Map<String, String>): Response<ResponseBody>
 
     // Quick Helper
+    @POST("rest/v1/rpc/partner_helper_tags")
+    suspend fun rpcHelperTags(@Header("apikey") apiKey: String, @Header("Authorization") bearerToken: String, @Body params: Map<String, String>): Response<ResponseBody>
+
+    @POST("rest/v1/rpc/partner_set_helper_tags")
+    suspend fun rpcSetHelperTags(@Header("apikey") apiKey: String, @Header("Authorization") bearerToken: String, @Body params: Map<String, @JvmSuppressWildcards Any>): Response<ResponseBody>
+
     @POST("rest/v1/rpc/helper_partner_status")
     suspend fun rpcHelperStatus(
         @Header("apikey") apiKey: String,
