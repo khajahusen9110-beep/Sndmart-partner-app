@@ -249,6 +249,45 @@ class SupabaseRepository(
     private var pollingJob: Job? = null
     private val coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    // ---- Last known data on disk: shown at once on start, replaced by the fresh data a moment later ----
+    private val snapshots = com.example.data.local.SnapshotCache(context, moshi)
+    private fun listType(c: Class<*>) = com.squareup.moshi.Types.newParameterizedType(List::class.java, c)
+
+    init {
+        val uid = prefs.userId
+        if (!uid.isNullOrBlank() && prefs.approvalStatus.equals("approved", ignoreCase = true)) {
+            try {
+                // pending offers are time-sensitive: only settled deliveries come from the disk
+                snapshots.load<List<DeliveryAssignment>>(uid, "assignments", listType(DeliveryAssignment::class.java))
+                    ?.filter { !it.status.equals("assigned", ignoreCase = true) }?.takeIf { it.isNotEmpty() }?.let { _assignments.value = it }
+                snapshots.load<List<DeliveryEarning>>(uid, "earnings", listType(DeliveryEarning::class.java))?.let { _earnings.value = it }
+                snapshots.load<List<CashLedgerEntry>>(uid, "ledger", listType(CashLedgerEntry::class.java))?.let { _cashLedger.value = it }
+                snapshots.load<CashStatus>(uid, "cashStatus", CashStatus::class.java)?.let { _cashStatus.value = it }
+                snapshots.load<List<PaymentRequest>>(uid, "payouts", listType(PaymentRequest::class.java))?.let { _paymentRequests.value = it }
+                snapshots.load<DeliveryPartnerBankDetails>(uid, "bank", DeliveryPartnerBankDetails::class.java)?.let { _bankDetails.value = it }
+                snapshots.load<List<InAppNotification>>(uid, "notifications", listType(InAppNotification::class.java))?.let { _notifications.value = it }
+                snapshots.load<List<DeliveryPartnerReview>>(uid, "reviews", listType(DeliveryPartnerReview::class.java))?.let { _reviews.value = it }
+            } catch (e: Exception) { Log.w("SupabaseRepo", "Snapshot preload failed: ${e.message}") }
+        }
+        // every change of a list is written back (a second after the last one), so the next start is instant too
+        fun <T> keep(flow: StateFlow<T>, key: String, type: java.lang.reflect.Type) {
+            coroutineScope.launch {
+                flow.drop(1).debounce(1_000L).collect { v ->
+                    val id = prefs.userId
+                    if (!id.isNullOrBlank() && v != null && prefs.token != null) snapshots.save(id, key, type, v)
+                }
+            }
+        }
+        keep(_assignments, "assignments", listType(DeliveryAssignment::class.java))
+        keep(_earnings, "earnings", listType(DeliveryEarning::class.java))
+        keep(_cashLedger, "ledger", listType(CashLedgerEntry::class.java))
+        keep(_cashStatus, "cashStatus", CashStatus::class.java)
+        keep(_paymentRequests, "payouts", listType(PaymentRequest::class.java))
+        keep(_bankDetails, "bank", DeliveryPartnerBankDetails::class.java)
+        keep(_notifications, "notifications", listType(InAppNotification::class.java))
+        keep(_reviews, "reviews", listType(DeliveryPartnerReview::class.java))
+    }
+
     private fun createApiService(baseUrl: String): SupabaseApiService {
         val formattedUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
         return Retrofit.Builder()
@@ -2546,23 +2585,19 @@ class SupabaseRepository(
         try {
             ensureValidSession()
             coroutineScope {
+                // What the first screen needs goes first, alone, so it is not slowed by the rest on a weak network...
                 val assignmentsDeferred = async { fetchAssignments(page = 0) }
-                val earningsDeferred = async { fetchEarnings() }
-                val ledgerDeferred = async { fetchCashLedger() }
-                val payoutsDeferred = async { fetchPaymentRequests() }
-                val notifsDeferred = async { fetchNotifications() }
-                val reviewsDeferred = async { fetchReviews() }
-                val bankDeferred = async { fetchBankDetails() }
                 val cashStatusDeferred = async { fetchCashStatus() }
+                awaitAll(assignmentsDeferred, cashStatusDeferred)
+                _isDataLoading.value = false
+                // ...then the other tabs' data (earnings, payouts, notifications ...) follows in parallel.
                 awaitAll(
-                    cashStatusDeferred,
-                    assignmentsDeferred,
-                    earningsDeferred,
-                    ledgerDeferred,
-                    payoutsDeferred,
-                    notifsDeferred,
-                    reviewsDeferred,
-                    bankDeferred
+                    async { fetchEarnings() },
+                    async { fetchCashLedger() },
+                    async { fetchPaymentRequests() },
+                    async { fetchNotifications() },
+                    async { fetchReviews() },
+                    async { fetchBankDetails() }
                 )
             }
         } finally {
@@ -2571,6 +2606,7 @@ class SupabaseRepository(
     }
 
     fun clearData() {
+        snapshots.clear()
         stopRealtimeWatcher()
         OrderAlertNotifier.cancelAll(context)
         localStages.clear()

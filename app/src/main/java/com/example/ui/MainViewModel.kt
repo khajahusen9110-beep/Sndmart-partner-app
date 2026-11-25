@@ -485,6 +485,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             isOnline = prefs.onlineState, isAvailable = prefs.availableState
                         )
                     )
+                    // Do not wait for the profile check: the first screen's data is already on its way (and the saved copy is on screen).
+                    if (!prefs.token.isNullOrBlank()) loadAllBackendData()
                 }
                 val sessionValid = repository.ensureValidSession().isSuccess
                 if (!sessionValid) {
