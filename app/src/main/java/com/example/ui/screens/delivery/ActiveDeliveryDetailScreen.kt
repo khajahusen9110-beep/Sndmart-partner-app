@@ -509,6 +509,8 @@ fun ActiveDeliveryDetailScreen(
                             PhoneCallButton(phoneNumber = assignment.customerPhone)
                         }
                     }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    CustomerLiveLocation(viewModel = viewModel, orderId = assignment.orderId)
                 }
             }
 

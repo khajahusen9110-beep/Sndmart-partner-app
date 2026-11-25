@@ -178,6 +178,15 @@ data class VendorDbModel(
     val phone: String? = null
 )
 
+/** The customer's real position when the order was placed (phone GPS), with its accuracy and the distance from the saved address pin. */
+@JsonClass(generateAdapter = true)
+data class OrderLiveLocation(
+    val lat: Double = 0.0,
+    val lng: Double = 0.0,
+    @Json(name = "accuracy_m") val accuracyM: Double? = null,
+    @Json(name = "distance_from_address_m") val distanceFromAddressM: Double? = null
+)
+
 @JsonClass(generateAdapter = true)
 data class CustomerAddressDbModel(
     val id: String,

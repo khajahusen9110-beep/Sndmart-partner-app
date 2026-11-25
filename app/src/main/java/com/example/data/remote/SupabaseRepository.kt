@@ -1640,6 +1640,20 @@ class SupabaseRepository(
     }
 
     /** Reads the server's cash status; keeps the last value when offline or on error. */
+    /** Customer's real GPS position captured when the order was placed (null if none / not allowed). */
+    suspend fun getOrderLiveLocation(orderId: String): OrderLiveLocation? = withContext(Dispatchers.IO) {
+        if (prefs.token == null || orderId.isBlank()) return@withContext null
+        try {
+            val response = apiService.getOrderLiveLocation(
+                apiKey = prefs.customSupabaseKey, bearerToken = bearer(), orderIdFilter = "eq.$orderId"
+            )
+            response.body()?.firstOrNull()?.takeIf { response.isSuccessful && (it.lat != 0.0 || it.lng != 0.0) }
+        } catch (e: Exception) {
+            Log.w("SupabaseRepo", "Live location fetch failed: ${e.message}")
+            null
+        }
+    }
+
     suspend fun fetchCashStatus(): CashStatus? = withContext(Dispatchers.IO) {
         if (prefs.token == null) return@withContext _cashStatus.value
         try {

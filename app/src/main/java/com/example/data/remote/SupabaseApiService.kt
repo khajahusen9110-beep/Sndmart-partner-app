@@ -162,6 +162,14 @@ interface SupabaseApiService {
         @Query("select") select: String = "id,order_id,product_name,variant_label,quantity,unit_price,total_price"
     ): Response<List<OrderItem>>
 
+    @GET("rest/v1/order_locations")
+    suspend fun getOrderLiveLocation(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") bearerToken: String,
+        @Query("order_id") orderIdFilter: String,
+        @Query("select") select: String = "lat,lng,accuracy_m,distance_from_address_m"
+    ): Response<List<OrderLiveLocation>>
+
     @GET("rest/v1/customer_addresses")
     suspend fun getCustomerAddressById(
         @Header("apikey") apiKey: String,
