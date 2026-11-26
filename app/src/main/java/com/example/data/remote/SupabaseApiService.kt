@@ -159,6 +159,8 @@ interface SupabaseApiService {
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("order_id") orderIdFilter: String,
+        // items the store could not give are not packed and not handed over
+        @Query("item_status") itemStatusFilter: String = "neq.rejected",
         @Query("select") select: String = "id,order_id,product_name,variant_label,quantity,unit_price,total_price"
     ): Response<List<OrderItem>>
 
