@@ -249,6 +249,45 @@ class SupabaseRepository(
     private var pollingJob: Job? = null
     private val coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    // ---- Last known data on disk: shown at once on start, replaced by the fresh data a moment later ----
+    private val snapshots = com.example.data.local.SnapshotCache(context, moshi)
+    private fun listType(c: Class<*>) = com.squareup.moshi.Types.newParameterizedType(List::class.java, c)
+
+    init {
+        val uid = prefs.userId
+        if (!uid.isNullOrBlank() && prefs.approvalStatus.equals("approved", ignoreCase = true)) {
+            try {
+                // pending offers are time-sensitive: only settled deliveries come from the disk
+                snapshots.load<List<DeliveryAssignment>>(uid, "assignments", listType(DeliveryAssignment::class.java))
+                    ?.filter { !it.status.equals("assigned", ignoreCase = true) }?.takeIf { it.isNotEmpty() }?.let { _assignments.value = it }
+                snapshots.load<List<DeliveryEarning>>(uid, "earnings", listType(DeliveryEarning::class.java))?.let { _earnings.value = it }
+                snapshots.load<List<CashLedgerEntry>>(uid, "ledger", listType(CashLedgerEntry::class.java))?.let { _cashLedger.value = it }
+                snapshots.load<CashStatus>(uid, "cashStatus", CashStatus::class.java)?.let { _cashStatus.value = it }
+                snapshots.load<List<PaymentRequest>>(uid, "payouts", listType(PaymentRequest::class.java))?.let { _paymentRequests.value = it }
+                snapshots.load<DeliveryPartnerBankDetails>(uid, "bank", DeliveryPartnerBankDetails::class.java)?.let { _bankDetails.value = it }
+                snapshots.load<List<InAppNotification>>(uid, "notifications", listType(InAppNotification::class.java))?.let { _notifications.value = it }
+                snapshots.load<List<DeliveryPartnerReview>>(uid, "reviews", listType(DeliveryPartnerReview::class.java))?.let { _reviews.value = it }
+            } catch (e: Exception) { Log.w("SupabaseRepo", "Snapshot preload failed: ${e.message}") }
+        }
+        // every change of a list is written back (a second after the last one), so the next start is instant too
+        fun <T> keep(flow: StateFlow<T>, key: String, type: java.lang.reflect.Type) {
+            coroutineScope.launch {
+                flow.drop(1).debounce(1_000L).collect { v ->
+                    val id = prefs.userId
+                    if (!id.isNullOrBlank() && v != null && prefs.token != null) snapshots.save(id, key, type, v)
+                }
+            }
+        }
+        keep(_assignments, "assignments", listType(DeliveryAssignment::class.java))
+        keep(_earnings, "earnings", listType(DeliveryEarning::class.java))
+        keep(_cashLedger, "ledger", listType(CashLedgerEntry::class.java))
+        keep(_cashStatus, "cashStatus", CashStatus::class.java)
+        keep(_paymentRequests, "payouts", listType(PaymentRequest::class.java))
+        keep(_bankDetails, "bank", DeliveryPartnerBankDetails::class.java)
+        keep(_notifications, "notifications", listType(InAppNotification::class.java))
+        keep(_reviews, "reviews", listType(DeliveryPartnerReview::class.java))
+    }
+
     private fun createApiService(baseUrl: String): SupabaseApiService {
         val formattedUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
         return Retrofit.Builder()
@@ -1346,6 +1385,25 @@ class SupabaseRepository(
         } catch (e: Exception) { Result.failure(e) }
     }
 
+    /** The city's helper categories with a tick on the ones this partner does; nothing ticked means every kind of job. */
+    suspend fun getHelperTags(): Result<List<HelperTag>> = withContext(Dispatchers.IO) {
+        try {
+            ensureValidSession()
+            val response = apiService.rpcHelperTags(prefs.customSupabaseKey, bearer(), emptyMap())
+            if (!response.isSuccessful) return@withContext Result.failure(Exception(errorMessage(response, "Could not load work types")))
+            val arr = JSONObject(response.body()?.string().orEmpty()).optJSONArray("tags") ?: org.json.JSONArray()
+            Result.success((0 until arr.length()).map { i -> arr.getJSONObject(i).let { HelperTag(it.getString("id"), it.optString("name"), it.optBoolean("selected")) } })
+        } catch (e: Exception) { Result.failure(e) }
+    }
+
+    suspend fun setHelperTags(ids: List<String>): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            ensureValidSession()
+            val response = apiService.rpcSetHelperTags(prefs.customSupabaseKey, bearer(), mapOf("p_ids" to ids))
+            if (response.isSuccessful) Result.success(Unit) else Result.failure(Exception(errorMessage(response, "Could not save")))
+        } catch (e: Exception) { Result.failure(e) }
+    }
+
     suspend fun getHelperStatus(): Result<HelperStatusDto> = withContext(Dispatchers.IO) {
         try {
             ensureValidSession()
@@ -1449,6 +1507,25 @@ class SupabaseRepository(
         }
     }
 
+    // Proof photos go through their own client: the shared one gives up after 15 s, too short for a slow mobile network.
+    private val proofClient: OkHttpClient by lazy {
+        okHttpClient.newBuilder()
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .writeTimeout(60, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .build()
+    }
+    private val proofApi: SupabaseApiService by lazy {
+        val url = prefs.customSupabaseUrl.let { if (it.endsWith("/")) it else "$it/" }
+        Retrofit.Builder().baseUrl(url).client(proofClient)
+            .addConverterFactory(MoshiConverterFactory.create(moshi)).build()
+            .create(SupabaseApiService::class.java)
+    }
+
+    // The last squeezed proof photo: a retry after a network failure must not squeeze the same picture again.
+    @Volatile private var lastPacked: Pair<ByteArray, ByteArray>? = null
+
     // Proof photo upload to Supabase storage bucket 'delivery-proof-photos'
     suspend fun uploadProofPhoto(
         assignmentId: String,
@@ -1462,31 +1539,40 @@ class SupabaseRepository(
             val storagePath = "$assignmentId/$fileName"
             // About 30 KB: uploads fast on a weak network and the proof stays readable. If the photo cannot be shrunk for any
             // reason the original is sent: a delivery must never be blocked by this.
-            val packed = com.example.util.ImageCompressor.compress(imageBytes, com.example.util.ImageCompressor.PROOF_TARGET_BYTES)?.bytes ?: imageBytes
+            val cached = lastPacked?.takeIf { it.first === imageBytes }?.second
+            val packed = cached ?: withContext(Dispatchers.Default) {
+                com.example.util.ImageCompressor.compress(imageBytes, com.example.util.ImageCompressor.PROOF_TARGET_BYTES)?.bytes ?: imageBytes
+            }.also { lastPacked = imageBytes to it }
             val requestBody = packed.toRequestBody("image/jpeg".toMediaTypeOrNull())
 
-            val response = withTimeout(30_000L) {
-                apiService.uploadStorageObject(
-                    apiKey = prefs.customSupabaseKey,
-                    bearerToken = bearer(),
-                    contentType = "image/jpeg",
-                    upsert = "true",
-                    bucket = bucket,
-                    folder = assignmentId,
-                    fileName = fileName,
-                    fileBytes = requestBody
-                )
+            var lastError: String? = null
+            for (attempt in 1..3) {
+                try {
+                    val response = withTimeout(75_000L) {
+                        proofApi.uploadStorageObject(
+                            apiKey = prefs.customSupabaseKey,
+                            bearerToken = bearer(),
+                            contentType = "image/jpeg",
+                            upsert = "true",
+                            bucket = bucket,
+                            folder = assignmentId,
+                            fileName = fileName,
+                            fileBytes = requestBody
+                        )
+                    }
+                    if (response.isSuccessful) return@withContext Result.success(storagePath)
+                    lastError = errorMessage(response, "Upload failed")
+                    Log.e("SupabaseRepo", "Proof photo upload error ($bucket/$storagePath): $lastError")
+                    if (response.code() in 400..499 && response.code() != 408 && response.code() != 429) break // a retry cannot help
+                } catch (e: TimeoutCancellationException) {
+                    lastError = "Upload timed out. Please check your network connection and retry."
+                } catch (e: java.io.IOException) {
+                    lastError = e.message ?: "Network error"
+                    Log.w("SupabaseRepo", "Proof photo upload attempt $attempt failed: $lastError")
+                }
+                if (attempt < 3) kotlinx.coroutines.delay(800L * attempt)
             }
-
-            if (response.isSuccessful) {
-                Result.success(storagePath)
-            } else {
-                val msg = errorMessage(response, "Upload failed")
-                Log.e("SupabaseRepo", "Proof photo upload error ($bucket/$storagePath): $msg")
-                Result.failure(Exception(msg))
-            }
-        } catch (e: TimeoutCancellationException) {
-            Result.failure(Exception("Upload timed out after 30 seconds. Please check your network connection and retry."))
+            Result.failure(Exception(lastError ?: "Upload failed"))
         } catch (e: Exception) {
             Log.e("SupabaseRepo", "Proof photo upload exception: ${e.message}", e)
             Result.failure(e)
@@ -1640,6 +1726,20 @@ class SupabaseRepository(
     }
 
     /** Reads the server's cash status; keeps the last value when offline or on error. */
+    /** Customer's real GPS position captured when the order was placed (null if none / not allowed). */
+    suspend fun getOrderLiveLocation(orderId: String): OrderLiveLocation? = withContext(Dispatchers.IO) {
+        if (prefs.token == null || orderId.isBlank()) return@withContext null
+        try {
+            val response = apiService.getOrderLiveLocation(
+                apiKey = prefs.customSupabaseKey, bearerToken = bearer(), orderIdFilter = "eq.$orderId"
+            )
+            response.body()?.firstOrNull()?.takeIf { response.isSuccessful && (it.lat != 0.0 || it.lng != 0.0) }
+        } catch (e: Exception) {
+            Log.w("SupabaseRepo", "Live location fetch failed: ${e.message}")
+            null
+        }
+    }
+
     suspend fun fetchCashStatus(): CashStatus? = withContext(Dispatchers.IO) {
         if (prefs.token == null) return@withContext _cashStatus.value
         try {
@@ -2504,23 +2604,19 @@ class SupabaseRepository(
         try {
             ensureValidSession()
             coroutineScope {
+                // What the first screen needs goes first, alone, so it is not slowed by the rest on a weak network...
                 val assignmentsDeferred = async { fetchAssignments(page = 0) }
-                val earningsDeferred = async { fetchEarnings() }
-                val ledgerDeferred = async { fetchCashLedger() }
-                val payoutsDeferred = async { fetchPaymentRequests() }
-                val notifsDeferred = async { fetchNotifications() }
-                val reviewsDeferred = async { fetchReviews() }
-                val bankDeferred = async { fetchBankDetails() }
                 val cashStatusDeferred = async { fetchCashStatus() }
+                awaitAll(assignmentsDeferred, cashStatusDeferred)
+                _isDataLoading.value = false
+                // ...then the other tabs' data (earnings, payouts, notifications ...) follows in parallel.
                 awaitAll(
-                    cashStatusDeferred,
-                    assignmentsDeferred,
-                    earningsDeferred,
-                    ledgerDeferred,
-                    payoutsDeferred,
-                    notifsDeferred,
-                    reviewsDeferred,
-                    bankDeferred
+                    async { fetchEarnings() },
+                    async { fetchCashLedger() },
+                    async { fetchPaymentRequests() },
+                    async { fetchNotifications() },
+                    async { fetchReviews() },
+                    async { fetchBankDetails() }
                 )
             }
         } finally {
@@ -2529,6 +2625,7 @@ class SupabaseRepository(
     }
 
     fun clearData() {
+        snapshots.clear()
         stopRealtimeWatcher()
         OrderAlertNotifier.cancelAll(context)
         localStages.clear()

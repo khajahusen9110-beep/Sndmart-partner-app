@@ -108,6 +108,7 @@ fun HelperTab(viewModel: MainViewModel) {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         SummaryRow(ui)
+        if (ui.enabled) HelperWorkTypes(viewModel)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(selected = section == 0, onClick = { section = 0 }, label = { Text("Requests (${open.size})") }, colors = helperChipColors())
             FilterChip(selected = section == 1, onClick = { section = 1 }, label = { Text("My work (${active.size + toCollect.size})") }, colors = helperChipColors())
@@ -244,6 +245,7 @@ private fun JobCard(job: HelperJob, busy: Boolean, onPhoto: (String) -> Unit, lo
                     if (lat != null && lng != null) OpenMapsButton(lat, lng, job.customerName ?: "Customer", Modifier.weight(1f))
                     job.contactPhone?.takeIf { it.isNotBlank() }?.let { PhoneCallButton(it, Modifier.weight(1f)) }
                 }
+                HelperLiveLocation(job)
             }
             actions()
         }
