@@ -34,7 +34,7 @@ android {
     // Bump versionCode for every Play upload (or pass VERSION_CODE from CI); Play rejects a
     // code it has already seen. VERSION_NAME is what the force-update check compares against
     // app_versions. 1.1.0 = RPC-only release; every partner must be on it before Phase 2.
-    versionCode = System.getenv("VERSION_CODE")?.takeIf { it.isNotBlank() }?.toInt() ?: 9
+    versionCode = System.getenv("VERSION_CODE")?.takeIf { it.isNotBlank() }?.toInt() ?: 10
     versionName = System.getenv("VERSION_NAME")?.takeIf { it.isNotBlank() } ?: "1.3.2"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
