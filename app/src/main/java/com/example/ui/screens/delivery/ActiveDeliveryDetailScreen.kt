@@ -522,7 +522,11 @@ try {
                     Spacer(modifier = Modifier.height(8.dp))
                     CustomerLiveLocation(viewModel = viewModel, orderId = assignment.orderId)
                     val allAssignments by viewModel.assignments.collectAsState()
-                    GroupPickupsCard(current = assignment, all = allAssignments)
+                    GroupPickupsCard(
+                        current = assignment, all = allAssignments,
+                        partnerLat = currentLocation.first, partnerLng = currentLocation.second,
+                        fetchItems = { oid -> viewModel.fetchOrderItems(oid) }
+                    )
                 }
             }
 

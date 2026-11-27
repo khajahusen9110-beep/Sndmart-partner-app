@@ -52,6 +52,13 @@ fun HelperTab(viewModel: MainViewModel) {
     var codeFor by remember { mutableStateOf<Pair<HelperJob, String>?>(null) } // job + action (start / complete)
     var section by remember { mutableIntStateOf(0) } // 0 requests, 1 my work, 2 history
     val tick = { viewModel.refreshHelper() }
+    val here by viewModel.currentLocation.collectAsState()
+    fun jobDistance(job: HelperJob): Double? {
+        val la = job.liveLat ?: job.lat
+        val lo = job.liveLng ?: job.lng
+        if (la == null || lo == null || (here.first == 0.0 && here.second == 0.0)) return null
+        return com.example.util.distanceKm(here.first, here.second, la, lo)
+    }
 
     val active = ui.active
     val toCollect = ui.toCollect
@@ -155,7 +162,7 @@ fun HelperTab(viewModel: MainViewModel) {
         if (section == 0) {
         if (open.isEmpty()) Text(if (active.isNotEmpty()) "Finish your current booking to get new requests." else if (ui.enabled) "No requests right now. They ring here when a customer books." else "You are not enabled for Quick Helper.", color = Slate600)
         open.forEach { job ->
-            JobCard(job, busyId == job.id, onPhoto = ::openPhoto, loadLink = { repo.helperPhotoLink(it).getOrNull() }) {
+            JobCard(job, busyId == job.id, onPhoto = ::openPhoto, loadLink = { repo.helperPhotoLink(it).getOrNull() }, distanceKm = jobDistance(job)) {
                 ActionButton("Accept request", busyId == job.id) {
                     busyId = job.id
                     scope.launch {
@@ -209,7 +216,7 @@ private fun HistoryRow(job: HelperJob) {
 
 
 @Composable
-private fun JobCard(job: HelperJob, busy: Boolean, onPhoto: (String) -> Unit, loadLink: suspend (String) -> String?, actions: @Composable ColumnScope.() -> Unit) {
+private fun JobCard(job: HelperJob, busy: Boolean, onPhoto: (String) -> Unit, loadLink: suspend (String) -> String?, distanceKm: Double? = null, actions: @Composable ColumnScope.() -> Unit) {
     Card(
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -229,6 +236,7 @@ private fun JobCard(job: HelperJob, busy: Boolean, onPhoto: (String) -> Unit, lo
             val whenText = job.requestedFor?.let { parseIsoMillis(it) }?.let { "Needed at " + SimpleDateFormat("EEE d MMM, h:mm a", Locale.getDefault()).format(Date(it)) } ?: "Needed as soon as possible"
             Text(whenText, fontSize = 12.sp, color = Slate600)
             Text(listOfNotNull(job.customerName, job.addressLine, job.landmark?.takeIf { it.isNotBlank() }?.let { "Near $it" }).joinToString("\n"), fontSize = 14.sp)
+            distanceKm?.let { Text("📍 About ${"%.1f".format(it)} km from you", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = HBlueDark) }
             if (job.photoPaths.isNotEmpty()) {
                 if (job.status == "requested") Text("${job.photoPaths.size} photo(s) from the customer. You can see them after you accept.", fontSize = 12.sp, color = HBlueDark, fontWeight = FontWeight.SemiBold)
                 else {
