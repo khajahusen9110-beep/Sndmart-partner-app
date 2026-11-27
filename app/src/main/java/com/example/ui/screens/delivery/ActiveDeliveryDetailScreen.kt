@@ -521,6 +521,8 @@ try {
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     CustomerLiveLocation(viewModel = viewModel, orderId = assignment.orderId)
+                    val allAssignments by viewModel.assignments.collectAsState()
+                    GroupPickupsCard(current = assignment, all = allAssignments)
                 }
             }
 

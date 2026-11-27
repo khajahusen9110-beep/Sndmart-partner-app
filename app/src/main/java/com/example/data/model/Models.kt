@@ -151,6 +151,8 @@ data class OrderDbModel(
     @Json(name = "vendor_id") val vendorId: String? = null,
     @Json(name = "address_id") val addressId: String? = null,
     @Json(name = "city_id") val cityId: String? = null,
+    /** Set when the customer ordered from several shops at once: all those orders go to one rider */
+    @Json(name = "group_id") val groupId: String? = null,
     @Json(name = "total_amount") val totalAmount: Double? = null,
     @Json(name = "delivery_fee") val deliveryFee: Double? = null,
     @Json(name = "payment_method") val paymentMethod: String? = null,

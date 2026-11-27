@@ -124,7 +124,7 @@ interface SupabaseApiService {
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("delivery_partner_id") partnerIdFilter: String,
-        @Query("select") select: String = "id,order_id,delivery_partner_id,status,assigned_at,accepted_at,picked_up_at,delivered_at,pickup_photo_url,delivered_photo_url,expires_at,estimated_delivery_minutes,estimated_delivery_at,orders(id,order_number,total_amount,delivery_fee,payment_method,payment_status,delivery_instructions,delivery_type,scheduled_for,scheduled_until,prepare_from,vendor_id,address_id,city_id,vendors(id,name,vendor_type,store_category_id,latitude,longitude,address,phone),customer_addresses(id,lat,lng,recipient_name,phone,address_line,landmark))",
+        @Query("select") select: String = "id,order_id,delivery_partner_id,status,assigned_at,accepted_at,picked_up_at,delivered_at,pickup_photo_url,delivered_photo_url,expires_at,estimated_delivery_minutes,estimated_delivery_at,orders(id,order_number,group_id,total_amount,delivery_fee,payment_method,payment_status,delivery_instructions,delivery_type,scheduled_for,scheduled_until,prepare_from,vendor_id,address_id,city_id,vendors(id,name,vendor_type,store_category_id,latitude,longitude,address,phone),customer_addresses(id,lat,lng,recipient_name,phone,address_line,landmark))",
         @Query("order") order: String = "created_at.desc",
         @Query("limit") limit: Int = 20,
         @Query("offset") offset: Int = 0
@@ -159,6 +159,8 @@ interface SupabaseApiService {
         @Header("apikey") apiKey: String,
         @Header("Authorization") bearerToken: String,
         @Query("order_id") orderIdFilter: String,
+        // items the store could not give are not packed and not handed over
+        @Query("item_status") itemStatusFilter: String = "neq.rejected",
         @Query("select") select: String = "id,order_id,product_name,variant_label,quantity,unit_price,total_price"
     ): Response<List<OrderItem>>
 
